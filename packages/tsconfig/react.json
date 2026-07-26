@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Code Nexus React (Vite app)",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "useDefineForClassFields": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  }
+}

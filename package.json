@@ -1,0 +1,39 @@
+{
+  "name": "code-nexus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Code Nexus — university placement-management platform (Phase 1: foundation & scaffolding)",
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "db:generate": "pnpm --filter @code-nexus/db db:generate",
+    "db:migrate": "pnpm --filter @code-nexus/db db:migrate",
+    "db:seed": "pnpm --filter @code-nexus/db db:seed",
+    "db:studio": "pnpm --filter @code-nexus/db db:studio",
+    "infra:up": "docker compose up --wait",
+    "infra:init": "docker compose --profile init run --rm minio-setup",
+    "infra:down": "docker compose down",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "eslint": "^9.17.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.11",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,css}": "prettier --write",
+    "*.{ts,tsx}": "eslint --fix --no-warn-ignored --flag v10_config_lookup_from_file"
+  }
+}

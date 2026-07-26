@@ -1,0 +1,1127 @@
+// =============================================================================
+// Code Nexus — Prisma schema (Phase 1: IDENTITY CORE ONLY)
+// =============================================================================
+// Conventions (prompt_phase1.md §6.1), applied to every model:
+//   - id        String    @id @default(uuid())    -> internal primary key
+//   - publicId   String    @unique @default(uuid()) -> platform-wide public ref
+//   - createdAt  DateTime  @default(now())  @db.Timestamptz(6)  (UTC)
+//   - updatedAt  DateTime  @updatedAt       @db.Timestamptz(6)  (UTC)
+//   - deletedAt  DateTime? @db.Timestamptz(6)                    (soft delete)
+//
+// Identity model choice (documented): TABLE-PER-ROLE, not polymorphic.
+//   `User` is the auth anchor (email + passwordHash + role). Each role has its
+//   own table (Student/Recruiter/PlatformAdmin) or org table (University/
+//   Company) linked 1:1 via a unique `userId` FK. This keeps role-specific
+//   profile fields cleanly segregated for later phases.
+//
+// `User.publicId` is THE canonical id used in place of email to reference a
+// person/login across services (e.g. the Phase-5 mailing service). Entity
+// tables also carry their own `publicId` per §6.1 for org-level references.
+//
+// NOTE: The `Role` and `UserStatus` enums below MUST mirror the string unions
+// exported from @code-nexus/types (packages/types/src/roles.ts).
+//
+// FUTURE PHASES (do NOT add here in Phase 1):
+//   Phase 3 profile fields (cgpa, branch, resume, ...), Phase 4 Drive /
+//   Application, Phase 5 Mail / Attachment, Phase 6 Question / Submission /
+//   SubmissionActivity, Phase 7 Contest / Leaderboard, Phase 8 Webinar /
+//   Attendance, Phase 9 Interview / Feedback, Phase 10 Recording / EventLog.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  UNIVERSITY
+  COMPANY
+  RECRUITER
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING_PROFILE
+  ACTIVE
+  SUSPENDED
+}
+
+/// Lifecycle of a placement Drive (Phase 4).
+enum DriveStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+/// The application funnel state machine (Phase 4). Allowed transitions live in
+/// @code-nexus/types (ALLOWED_APPLICATION_TRANSITIONS) and are enforced by the
+/// API — the DB stores the value only.
+/// FUTURE (do NOT add now): TEST_ASSIGNED / INTERVIEW_SCHEDULED arrive with the
+/// Code Arena (Phase 6/7) and Interview (Phase 9) phases.
+enum ApplicationStatus {
+  APPLIED
+  SHORTLISTED
+  OFFERED
+  REJECTED
+  WITHDRAWN
+}
+
+/// Auth anchor for every login on the platform.
+model User {
+  id                String     @id @default(uuid())
+  publicId          String     @unique @default(uuid())
+  email             String     @unique
+  passwordHash      String
+  role              Role
+  status            UserStatus @default(PENDING_PROFILE)
+  mustResetPassword Boolean    @default(true)
+  lastLoginAt       DateTime?  @db.Timestamptz(6) // set on successful login (Phase 2)
+
+  // Exactly one of these is populated, determined by `role`.
+  student       Student?
+  recruiter     Recruiter?
+  university    University?
+  company       Company?
+  platformAdmin PlatformAdmin?
+
+  // Phase 5 — internal mailing (addressed by publicId).
+  sentMails    Mail[]          @relation("sentMails")
+  receivedMail MailRecipient[] @relation("receivedMail")
+
+  // Phase 6 — Code Arena questions this user authored (admin).
+  authoredQuestions Question[] @relation("authoredQuestions")
+
+  // Phase 7 — contests this user created (university/company/admin).
+  createdContests Contest[] @relation("createdContests")
+
+  // Phase 8 — webinars this user created + real-time chat/poll activity.
+  createdWebinars  Webinar[]         @relation("createdWebinars")
+  webinarMessages  WebinarMessage[]  @relation("webinarMessageSender")
+  webinarPollVotes WebinarPollVote[] @relation("webinarPollVoter")
+
+  // Phase 9 — interviews this user created + participates in + authored feedback.
+  createdInterviews      Interview[]            @relation("createdInterviews")
+  interviewParticipation InterviewParticipant[]
+  interviewFeedback      InterviewFeedback[]    @relation("interviewFeedbackAuthor")
+
+  // Phase 10 — recordings this user captured, timeline events they caused, and
+  // their audited accesses to recorded media.
+  recordedInterviews  InterviewRecording[] @relation("recordedInterviews")
+  interviewEvents     InterviewEvent[]     @relation("interviewEventActor")
+  recordingAccessLogs RecordingAccessLog[] @relation("recordingAccess")
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([role])
+  @@map("users")
+}
+
+/// A university organisation (has one login User, has many Students).
+model University {
+  id       String  @id @default(uuid())
+  publicId String  @unique @default(uuid())
+  name     String
+  code     String  @unique // short human code, e.g. "IITB"
+  website  String? // Phase 3 (optional)
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  students Student[]
+  drives   Drive[] // Phase 4 — drives targeting this university
+
+  // Phase 7 — contests hosted by / targeting this university.
+  hostedContests   Contest[] @relation("hostUniversityContests")
+  targetedContests Contest[] @relation("targetUniversityContests")
+
+  // Phase 8 — webinars hosted by / targeting this university.
+  hostedWebinars   Webinar[] @relation("hostUniversityWebinars")
+  targetedWebinars Webinar[] @relation("targetUniversityWebinars")
+
+  // Phase 9 — interviews hosted by this university (e.g. mock interviews).
+  hostedInterviews Interview[] @relation("hostUniversityInterviews")
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@map("universities")
+}
+
+/// A company organisation (has one login User, has many Recruiters).
+model Company {
+  id       String  @id @default(uuid())
+  publicId String  @unique @default(uuid())
+  name     String
+  website  String? // Phase 3 (optional)
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  recruiters Recruiter[]
+  drives     Drive[] // Phase 4 — drives launched by this company
+
+  // Phase 7 — contests hosted by this company.
+  hostedContests Contest[] @relation("hostCompanyContests")
+
+  // Phase 8 — webinars hosted by this company.
+  hostedWebinars Webinar[] @relation("hostCompanyWebinars")
+
+  // Phase 9 — interviews hosted by this company.
+  hostedInterviews Interview[] @relation("hostCompanyInterviews")
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@map("companies")
+}
+
+/// A student, provisioned by their University. Profile fields arrive in Phase 3.
+model Student {
+  id             String    @id @default(uuid())
+  publicId       String    @unique @default(uuid())
+  // Profile fields (nullable so the row exists before completion; the required
+  // set is enforced by the API via @code-nexus/types, not the DB). (Phase 3)
+  firstName      String?
+  lastName       String?
+  rollNumber     String? // enrollment number, unique within a university
+  branch         String? // free string in Phase 3 (universities differ)
+  graduationYear Int?
+  cgpa           Decimal?  @db.Decimal(4, 2) // 0.00–10.00 (range checked in zod)
+  phone          String?
+  gender         String?
+  dateOfBirth    DateTime? @db.Timestamptz(6)
+  resumeUrl      String? // TODO(phaseN): replace with uploaded-file ref via object storage
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  universityId String
+  university   University @relation(fields: [universityId], references: [id])
+
+  applications Application[] // Phase 4 — this student's drive applications
+  submissions  Submission[] // Phase 6 — Code Arena submissions
+
+  contestParticipations ContestParticipant[] // Phase 7
+
+  webinarAttendance WebinarAttendance[] // Phase 8
+
+  interviewsAsCandidate Interview[] // Phase 9
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@unique([universityId, rollNumber])
+  @@index([universityId])
+  @@index([universityId, branch])
+  @@map("students")
+}
+
+/// A recruiter, provisioned by their Company.
+model Recruiter {
+  id          String  @id @default(uuid())
+  publicId    String  @unique @default(uuid())
+  firstName   String?
+  lastName    String?
+  designation String? // Phase 3
+  phone       String?
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([companyId])
+  @@map("recruiters")
+}
+
+/// A member of the Code Nexus admin team.
+model PlatformAdmin {
+  id        String  @id @default(uuid())
+  publicId  String  @unique @default(uuid())
+  firstName String?
+  lastName  String?
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@map("platform_admins")
+}
+
+// =============================================================================
+// Phase 4 — Placement Drives & Applications
+// =============================================================================
+
+/// A placement drive: a Company launches it targeting exactly one University.
+/// Only that university's eligible students can see/apply while it is OPEN and
+/// within the apply window. Eligibility (minCgpa/allowedBranches/
+/// allowedGraduationYears) is displayed on the client but ENFORCED server-side.
+model Drive {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  title       String
+  description String
+  roleTitle   String? // the job/role, e.g. "SDE-1"
+  location    String?
+  // Annual CTC in whole INR (rupees/year). Nullable = undisclosed. Formatted on
+  // the client; never a float (documented in README).
+  ctcAnnual   Int?
+
+  // Eligibility gates. null minCgpa = no CGPA gate; empty array = no restriction.
+  minCgpa                Decimal? @db.Decimal(4, 2)
+  allowedBranches        String[] // matched case-insensitively/trimmed vs Student.branch
+  allowedGraduationYears Int[]
+
+  applyDeadline DateTime    @db.Timestamptz(6)
+  status        DriveStatus @default(DRAFT)
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  universityId String
+  university   University @relation(fields: [universityId], references: [id])
+
+  applications Application[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([companyId])
+  @@index([universityId])
+  @@index([universityId, status])
+  @@map("drives")
+}
+
+/// A student's application to a drive. Apply-once per (drive, student). The
+/// status advances through ApplicationStatus via ALLOWED_APPLICATION_TRANSITIONS
+/// (company-driven shortlist/offer/reject; student-driven withdraw).
+model Application {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  status     ApplicationStatus @default(APPLIED)
+  appliedAt  DateTime          @default(now()) @db.Timestamptz(6)
+  decisionAt DateTime?         @db.Timestamptz(6) // set when moved to a terminal status
+  note       String? // optional short company note on a decision (NOT interview feedback — Phase 9)
+
+  driveId String
+  drive   Drive  @relation(fields: [driveId], references: [id])
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  interviews Interview[] // Phase 9 — interviews linked to this application
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@unique([driveId, studentId])
+  @@index([driveId, status])
+  @@index([studentId])
+  @@map("applications")
+}
+
+// =============================================================================
+// Phase 5 — Internal Mailing Service
+// =============================================================================
+
+/// An internal mail: a text subject + body sent between platform users, addressed
+/// by `User.publicId`. Directional send rules live in @code-nexus/auth
+/// (`canMail`) and are enforced per-recipient by the API. `system = true` marks
+/// auto-generated notifications (e.g. a Phase-4 offer/reject decision).
+/// (No attachments in Phase 5 — text only. TODO(phaseN): jpg/png via object storage.)
+model Mail {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  subject String
+  body    String
+  system  Boolean @default(false)
+
+  senderId String
+  sender   User   @relation("sentMails", fields: [senderId], references: [id])
+
+  sentAt DateTime @default(now()) @db.Timestamptz(6)
+
+  recipients MailRecipient[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([senderId, sentAt])
+  @@map("mails")
+}
+
+/// Per-recipient delivery + read state for a Mail. A mail may have one or many
+/// recipients; each has an independent `readAt` (null = unread). `deletedAt`
+/// exists for a future "delete from inbox" — no delete UI is built in Phase 5.
+model MailRecipient {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  mailId String
+  mail   Mail   @relation(fields: [mailId], references: [id])
+
+  recipientId String
+  recipient   User   @relation("receivedMail", fields: [recipientId], references: [id])
+
+  readAt DateTime? @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@unique([mailId, recipientId])
+  @@index([recipientId, readAt])
+  @@index([recipientId, mailId])
+  @@map("mail_recipients")
+}
+
+// =============================================================================
+// Phase 6 — Code Arena (DSA practice + isolated execution pipeline)
+// =============================================================================
+
+/// DSA topic buckets used to segregate the question bank.
+enum Topic {
+  ARRAY
+  STRING
+  LINKED_LIST
+  STACK_QUEUE
+  TREE
+  GRAPH
+  HEAP
+  HASHMAP
+  DP
+  GREEDY
+  MATH
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+/// Languages the arena supports (mapped to Judge0 language_ids in the worker).
+enum ProgrammingLanguage {
+  PYTHON
+  CPP
+  JAVA
+  JAVASCRIPT
+}
+
+/// RUN executes against the sample testcase(s); SUBMIT against all testcases and
+/// counts toward attempted/solved/heatmap.
+enum SubmissionKind {
+  RUN
+  SUBMIT
+}
+
+/// Lifecycle of a submission as it flows through the queue → worker → Judge0.
+enum SubmissionStatus {
+  QUEUED
+  RUNNING
+  DONE
+  ERROR
+}
+
+/// The outcome of a finished submission (Judge0 status mapped to our taxonomy).
+enum Verdict {
+  ACCEPTED
+  WRONG_ANSWER
+  TIME_LIMIT_EXCEEDED
+  RUNTIME_ERROR
+  COMPILATION_ERROR
+  INTERNAL_ERROR
+}
+
+/// A DSA problem. The student's program reads stdin and writes stdout
+/// (stdin/stdout model — no per-language function harness in Phase 6).
+model Question {
+  id          String     @id @default(uuid())
+  publicId    String     @unique @default(uuid())
+  slug        String     @unique
+  title       String
+  description String // markdown
+  constraints String?
+  difficulty  Difficulty
+  topic       Topic
+  starterCode Json? // optional per-language templates: { PYTHON: "...", ... }
+  published   Boolean    @default(true)
+
+  createdById String?
+  createdBy   User?   @relation("authoredQuestions", fields: [createdById], references: [id])
+
+  testCases        TestCase[]
+  submissions      Submission[]
+  contestQuestions ContestQuestion[] // Phase 7
+  interviews       Interview[] // Phase 9 — the optional coding problem for an interview
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([topic, difficulty])
+  @@index([published])
+  @@map("questions")
+}
+
+/// One (stdin, expectedStdout) case for a question. `isSample` cases are visible
+/// (shown on the detail page + used by Run); hidden cases are NEVER serialized to
+/// the client.
+model TestCase {
+  id             String  @id @default(uuid())
+  publicId       String  @unique @default(uuid())
+  input          String // stdin
+  expectedOutput String
+  isSample       Boolean @default(false)
+  ordinal        Int
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id])
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([questionId, ordinal])
+  @@map("test_cases")
+}
+
+/// A Run or Submit. Created QUEUED by the API (which publishes a job and never
+/// executes code); filled in by the execution-worker after Judge0 runs it.
+model Submission {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  language   ProgrammingLanguage
+  sourceCode String
+  kind       SubmissionKind
+  status     SubmissionStatus    @default(QUEUED)
+  verdict    Verdict?
+
+  testsPassed     Int     @default(0)
+  testsTotal      Int     @default(0)
+  failedTestIndex Int? // 1-based index of the first failing testcase, if any
+  runtimeMs       Int?
+  memoryKb        Int?
+  // Populated for RUN only (sample output shown to the student); bounded in size.
+  stdout          String?
+  stderr          String?
+  compileOutput   String?
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id])
+
+  // Phase 7 — set when this submission is part of a contest (null = practice).
+  contestId String?
+  contest   Contest? @relation(fields: [contestId], references: [id])
+
+  // Phase 9 — set when this submission was run inside an interview (null = practice).
+  interviewId String?
+  interview   Interview? @relation(fields: [interviewId], references: [id])
+
+  startedAt  DateTime? @db.Timestamptz(6)
+  finishedAt DateTime? @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([studentId, createdAt])
+  @@index([studentId, questionId])
+  @@index([questionId, verdict])
+  @@index([status])
+  @@index([contestId, questionId])
+  @@index([interviewId])
+  @@map("submissions")
+}
+
+// =============================================================================
+// Phase 7 — Contests (timed competitive rounds, reuse the execution pipeline)
+// =============================================================================
+
+/// Stored contest status. The live/ended *phase* is DERIVED from time
+/// (startsAt + durationMinutes vs now) in @code-nexus/types, not stored.
+enum ContestStatus {
+  DRAFT
+  SCHEDULED
+  CANCELLED
+}
+
+enum ContestHostKind {
+  UNIVERSITY
+  COMPANY
+}
+
+/// A timed contest hosted by a University or Company, for one University's
+/// students. Questions are the existing bank (published) or custom (published:
+/// false). Submissions reuse the Submission model (tagged with contestId).
+model Contest {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  title       String
+  description String
+
+  hostKind         ContestHostKind
+  hostUniversityId String? // set when hostKind = UNIVERSITY
+  hostUniversity   University?     @relation("hostUniversityContests", fields: [hostUniversityId], references: [id])
+  hostCompanyId    String? // set when hostKind = COMPANY
+  hostCompany      Company?        @relation("hostCompanyContests", fields: [hostCompanyId], references: [id])
+
+  // The participating student pool.
+  targetUniversityId String
+  targetUniversity   University @relation("targetUniversityContests", fields: [targetUniversityId], references: [id])
+
+  allowedLanguages ProgrammingLanguage[]
+  // Timing (exam model): entry opens at `startsAt`, closes at `entryDeadline`
+  // (a student must START by then); each attempt lasts `durationMinutes` from
+  // when that student starts.
+  startsAt         DateTime              @db.Timestamptz(6)
+  entryDeadline    DateTime              @db.Timestamptz(6)
+  durationMinutes  Int
+  status           ContestStatus         @default(DRAFT)
+
+  createdById String
+  createdBy   User   @relation("createdContests", fields: [createdById], references: [id])
+
+  questions    ContestQuestion[]
+  participants ContestParticipant[]
+  submissions  Submission[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([targetUniversityId, startsAt])
+  @@index([hostUniversityId])
+  @@index([hostCompanyId])
+  @@index([status])
+  @@map("contests")
+}
+
+/// A question in a contest (from the bank or custom). Ordered by `ordinal`.
+model ContestQuestion {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  contestId String
+  contest   Contest @relation(fields: [contestId], references: [id])
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id])
+
+  ordinal Int
+  points  Int? // optional weight; null = unweighted (raw testcases)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@unique([contestId, questionId])
+  @@index([contestId, ordinal])
+  @@map("contest_questions")
+}
+
+/// A student registered/participating in a contest.
+model ContestParticipant {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  contestId String
+  contest   Contest @relation(fields: [contestId], references: [id])
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  joinedAt    DateTime  @default(now()) @db.Timestamptz(6)
+  // Exam-attempt tracking: `startedAt` is set once when the student enters
+  // (their personal timer = startedAt + contest.durationMinutes); `submittedAt`
+  // finalizes the attempt — after either, no re-entry / no more submissions.
+  startedAt   DateTime? @db.Timestamptz(6)
+  submittedAt DateTime? @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@unique([contestId, studentId])
+  @@index([contestId])
+  @@map("contest_participants")
+}
+
+// =============================================================================
+// Phase 8 — Webinars (one-to-many live sessions: HLS media + real-time room)
+// =============================================================================
+
+/// Stored, host-controlled lifecycle (NOT time-derived, unlike a contest phase):
+/// DRAFT -> SCHEDULED (publish) -> LIVE (go-live) -> ENDED (end); DRAFT|SCHEDULED
+/// -> CANCELLED.
+enum WebinarStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  ENDED
+  CANCELLED
+}
+
+enum WebinarHostKind {
+  UNIVERSITY
+  COMPANY
+}
+
+enum PollStatus {
+  OPEN
+  CLOSED
+}
+
+/// A webinar hosted by a University or Company for one University's students.
+/// The media plane (HLS) is out of band: the host pushes RTMP to a media server
+/// (or a stub) and viewers play `playbackUrl`. `streamKey` is a host-only secret
+/// (never serialized to viewers). Chat/polls/attendance are the real-time room,
+/// carried by the ws-gateway.
+model Webinar {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  title       String
+  description String
+
+  hostKind         WebinarHostKind
+  hostUniversityId String? // set when hostKind = UNIVERSITY
+  hostUniversity   University?     @relation("hostUniversityWebinars", fields: [hostUniversityId], references: [id])
+  hostCompanyId    String? // set when hostKind = COMPANY
+  hostCompany      Company?        @relation("hostCompanyWebinars", fields: [hostCompanyId], references: [id])
+
+  // The audience pool.
+  targetUniversityId String
+  targetUniversity   University @relation("targetUniversityWebinars", fields: [targetUniversityId], references: [id])
+
+  scheduledStartsAt DateTime      @db.Timestamptz(6)
+  status            WebinarStatus @default(DRAFT)
+
+  // Media plane (out of band). streamKey is a host-only secret; playbackUrl is
+  // the viewer HLS manifest (null until live / with the stub provider).
+  streamKey   String    @unique @default(uuid())
+  playbackUrl String?
+  startedAt   DateTime? @db.Timestamptz(6) // set on go-live
+  endedAt     DateTime? @db.Timestamptz(6) // set on end
+  // TODO(phaseN): recordingUrl / recording ref (Phase 10)
+
+  createdById String
+  createdBy   User   @relation("createdWebinars", fields: [createdById], references: [id])
+
+  messages   WebinarMessage[]
+  polls      WebinarPoll[]
+  attendance WebinarAttendance[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([targetUniversityId, scheduledStartsAt])
+  @@index([hostUniversityId])
+  @@index([hostCompanyId])
+  @@index([status])
+  @@map("webinars")
+}
+
+/// A live chat message. Persisted for history + late joiners. Plain text only.
+model WebinarMessage {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  webinarId String
+  webinar   Webinar @relation(fields: [webinarId], references: [id])
+
+  senderId String
+  sender   User   @relation("webinarMessageSender", fields: [senderId], references: [id])
+
+  body   String
+  sentAt DateTime @default(now()) @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([webinarId, sentAt])
+  @@map("webinar_messages")
+}
+
+/// A host-opened poll. Viewers vote once; aggregate counts broadcast live.
+model WebinarPoll {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  webinarId String
+  webinar   Webinar @relation(fields: [webinarId], references: [id])
+
+  question String
+  status   PollStatus @default(OPEN)
+  openedAt DateTime   @default(now()) @db.Timestamptz(6)
+  closedAt DateTime?  @db.Timestamptz(6)
+
+  options WebinarPollOption[]
+  votes   WebinarPollVote[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([webinarId])
+  @@map("webinar_polls")
+}
+
+model WebinarPollOption {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  pollId String
+  poll   WebinarPoll @relation(fields: [pollId], references: [id])
+
+  text    String
+  ordinal Int
+
+  votes WebinarPollVote[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([pollId, ordinal])
+  @@map("webinar_poll_options")
+}
+
+/// One vote per (poll, voter) — enforced at the DB.
+model WebinarPollVote {
+  id String @id @default(uuid())
+
+  pollId String
+  poll   WebinarPoll @relation(fields: [pollId], references: [id])
+
+  optionId String
+  option   WebinarPollOption @relation(fields: [optionId], references: [id])
+
+  voterId String
+  voter   User   @relation("webinarPollVoter", fields: [voterId], references: [id])
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([pollId, voterId])
+  @@index([pollId, optionId])
+  @@map("webinar_poll_votes")
+}
+
+/// One aggregated attendance row per (webinar, student), maintained by the
+/// ws-gateway from presence. `attendedSeconds` accumulates over connected
+/// intervals (reconnects must not double-count); `present` reflects live status.
+model WebinarAttendance {
+  id String @id @default(uuid())
+
+  webinarId String
+  webinar   Webinar @relation(fields: [webinarId], references: [id])
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  firstJoinedAt   DateTime @default(now()) @db.Timestamptz(6)
+  lastSeenAt      DateTime @default(now()) @db.Timestamptz(6)
+  attendedSeconds Int      @default(0)
+  present         Boolean  @default(false)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([webinarId, studentId])
+  @@index([webinarId])
+  @@map("webinar_attendance")
+}
+
+// =============================================================================
+// Phase 9 — Live Interviews (WebRTC P2P + collaborative surfaces + feedback)
+// =============================================================================
+
+/// Stored, host-controlled lifecycle (NOT time-derived).
+enum InterviewStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+  CANCELLED
+}
+
+enum InterviewHostKind {
+  UNIVERSITY
+  COMPANY
+}
+
+enum ParticipantRole {
+  INTERVIEWER
+  CANDIDATE
+}
+
+enum FeedbackRecommendation {
+  STRONG_YES
+  YES
+  NO
+  STRONG_NO
+}
+
+/// A 1:1 / small-panel live interview between a host org (its interviewers) and
+/// exactly one candidate student. Media is WebRTC peer-to-peer (out of band); the
+/// real-time room (signaling/code/whiteboard/chat) rides the ws-gateway. May link
+/// a drive Application (feedback can advance it) and an optional coding Question.
+model Interview {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  title String?
+
+  hostKind         InterviewHostKind
+  hostUniversityId String? // set when hostKind = UNIVERSITY
+  hostUniversity   University?       @relation("hostUniversityInterviews", fields: [hostUniversityId], references: [id])
+  hostCompanyId    String? // set when hostKind = COMPANY
+  hostCompany      Company?          @relation("hostCompanyInterviews", fields: [hostCompanyId], references: [id])
+
+  candidateStudentId String
+  candidateStudent   Student @relation(fields: [candidateStudentId], references: [id])
+
+  scheduledStartsAt DateTime        @db.Timestamptz(6)
+  durationMinutes   Int
+  status            InterviewStatus @default(SCHEDULED)
+
+  // Optional linkage into the drive funnel + an optional live coding problem.
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+  questionId    String?
+  question      Question?    @relation(fields: [questionId], references: [id])
+
+  // The final shared-editor content, saved on end (the record survives the call).
+  codeSnapshot String?
+
+  startedAt DateTime? @db.Timestamptz(6) // set on go-live
+  endedAt   DateTime? @db.Timestamptz(6) // set on end
+
+  createdById String
+  createdBy   User   @relation("createdInterviews", fields: [createdById], references: [id])
+
+  participants InterviewParticipant[]
+  feedback     InterviewFeedback[]
+  submissions  Submission[] // Phase-6 pipeline reuse (tagged interviewId)
+
+  // Phase 10 — review artifacts.
+  recording InterviewRecording? // at most one per interview
+  events    InterviewEvent[] // the chaptered timeline
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([candidateStudentId, scheduledStartsAt])
+  @@index([hostUniversityId])
+  @@index([hostCompanyId])
+  @@index([status])
+  @@map("interviews")
+}
+
+/// A person in the room: the candidate's user (role CANDIDATE) + one or more
+/// interviewer users (role INTERVIEWER).
+model InterviewParticipant {
+  id String @id @default(uuid())
+
+  interviewId String
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  role ParticipantRole
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([interviewId, userId])
+  @@index([interviewId])
+  @@map("interview_participants")
+}
+
+/// Private post-interview feedback — one per interviewer. Visible ONLY to the
+/// host org + admin; NEVER serialized to the candidate.
+model InterviewFeedback {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  interviewId String
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  authorId String
+  author   User   @relation("interviewFeedbackAuthor", fields: [authorId], references: [id])
+
+  rating         Int // 1..5 (range enforced by the API via zod)
+  notes          String
+  recommendation FeedbackRecommendation
+  submittedAt    DateTime               @default(now()) @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([interviewId, authorId])
+  @@index([interviewId])
+  @@map("interview_feedback")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10 — Interview recording, event timeline & review playback
+// ---------------------------------------------------------------------------
+
+enum RecordingStatus {
+  RECORDING
+  PROCESSING
+  READY
+  FAILED
+  DELETED
+}
+
+/// What earns a row on the review timeline: DELIBERATE ACTS ONLY.
+/// There is intentionally no CODE_ACTIVITY / WHITEBOARD_ACTIVITY kind — typing
+/// and drawing fire continuously and are not moments anyone seeks to.
+enum InterviewEventKind {
+  PARTICIPANT_JOINED
+  PARTICIPANT_LEFT
+  SURFACE_CHANGED
+  QUESTION_PINNED
+  SCREEN_SHARE_STARTED
+  SCREEN_SHARE_STOPPED
+  CODE_RUN
+  RECORDING_STARTED
+  RECORDING_STOPPED
+}
+
+/// One recording per interview. Phase 9 is a peer-to-peer mesh with no SFU, so
+/// capture happens in ONE elected interviewer's browser and arrives here as
+/// ordered chunks. `storageKey`s live on the segments; this row is the envelope.
+model InterviewRecording {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  interviewId String    @unique
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  status   RecordingStatus @default(RECORDING)
+  mimeType String // e.g. video/webm;codecs=vp8,opus — whatever the browser produced
+
+  startedAt  DateTime  @db.Timestamptz(6)
+  endedAt    DateTime? @db.Timestamptz(6)
+  durationMs Int?
+  totalBytes Int       @default(0)
+
+  /// The elected recorder (an interviewer) whose browser captured the media.
+  recordedByUserId String
+  recordedBy       User   @relation("recordedInterviews", fields: [recordedByUserId], references: [id])
+
+  segments RecordingSegment[]
+  access   RecordingAccessLog[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([status])
+  @@map("interview_recordings")
+}
+
+/// An ordered chunk of a recording. A recording is a SEQUENCE of files, not one
+/// blob: if the recorder's tab dies, the next elected peer starts a new segment
+/// rather than attempting to splice (which would need server-side ffmpeg).
+model RecordingSegment {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  recordingId String
+  recording   InterviewRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+
+  ordinal    Int // 0-based playback order
+  storageKey String // driver-opaque (filesystem path or S3 key) — never serialized
+  sizeBytes  Int
+  durationMs Int?
+  /// Offset from Interview.startedAt at which this segment begins.
+  startOffsetMs Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([recordingId, ordinal])
+  @@index([recordingId])
+  @@map("recording_segments")
+}
+
+/// A timeline mark, positioned relative to Interview.startedAt so it lines up
+/// with playback. Written by the ws-gateway (which already observes every room
+/// frame) and by the api for events it owns (question pinned, code run).
+model InterviewEvent {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  interviewId String
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  kind     InterviewEventKind
+  /// Milliseconds from Interview.startedAt, clamped to >= 0.
+  offsetMs Int
+
+  /// Null for system events that have no human actor.
+  actorUserId String?
+  actor       User?   @relation("interviewEventActor", fields: [actorUserId], references: [id])
+
+  /// Short display text for the chapter rail (a surface name, a question title).
+  label String?
+  /// Small structured extras. NEVER free-form user content beyond `label`.
+  meta  Json?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([interviewId, offsetMs])
+  @@index([interviewId, kind])
+  @@map("interview_events")
+}
+
+/// Who looked at a recording, and when. A recording is video of a real person,
+/// so every view/download/delete is auditable after the fact.
+model RecordingAccessLog {
+  id       String @id @default(uuid())
+  publicId String @unique @default(uuid())
+
+  recordingId String
+  recording   InterviewRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation("recordingAccess", fields: [userId], references: [id])
+
+  action     String // 'view' | 'download' | 'delete'
+  accessedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([recordingId, accessedAt])
+  @@map("recording_access_logs")
+}

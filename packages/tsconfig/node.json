@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Code Nexus Node (TS library / service)",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "types": ["node"]
+  }
+}

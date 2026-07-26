@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Env & secrets (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Prisma generated client (regenerated via db:generate)
+packages/db/generated/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Docker local volumes (if bind-mounted)
+.docker-data/
+
+# Locally-vendored tarballs (dev workaround for constrained networks; not committed)
+vendor/
+
+# Phase 10 — local recording storage (never commit recorded media)
+.data/
+<<<<<<< HEAD
+=======
+
+# Local phase prompt / planning docs (kept on disk, not published)
+prompt_phase*.md
+>>>>>>> 3991721 (first implementation complete)

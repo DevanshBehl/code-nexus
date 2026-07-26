@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Code Nexus — one platform for university placements: drives, DSA practice, contests, webinars, live interviews and recordings."
+    />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#06070d" media="(prefers-color-scheme: dark)" />
+    <title>Code Nexus — University Placement Platform</title>
+    <script>
+      // No-flash theme init: apply the saved/system theme before first paint.
+      (function () {
+        try {
+          var saved = localStorage.getItem('cn-theme');
+          var theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.dataset.theme = theme;
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+node_modules/
+dist/
+build/
+.turbo/
+coverage/
+pnpm-lock.yaml
+vendor/
+packages/db/generated/
+packages/db/prisma/migrations/
+
+# Planning docs authored by the project owner — leave formatting as-is
+about_project.md
+report.md
+<<<<<<< HEAD
+prompt_phase1.md
+=======
+prompt_phase*.md
+>>>>>>> 3991721 (first implementation complete)

@@ -1,0 +1,33 @@
+{
+  "name": "@code-nexus/ws-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@code-nexus/auth": "workspace:*",
+    "@code-nexus/config": "workspace:*",
+    "@code-nexus/db": "workspace:*",
+    "@code-nexus/logger": "workspace:*",
+    "@code-nexus/types": "workspace:*",
+    "ioredis": "^5.4.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@code-nexus/eslint-config": "workspace:*",
+    "@code-nexus/tsconfig": "workspace:*",
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "eslint": "^9.17.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

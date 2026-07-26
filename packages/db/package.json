@@ -1,0 +1,41 @@
+{
+  "name": "@code-nexus/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src prisma",
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  },
+  "devDependencies": {
+    "@code-nexus/eslint-config": "workspace:*",
+    "@code-nexus/tsconfig": "workspace:*",
+    "@code-nexus/types": "workspace:*",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7",
+    "eslint": "^9.17.0",
+    "prisma": "6.19.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
