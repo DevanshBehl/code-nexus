@@ -45,41 +45,47 @@ Four application processes, five infrastructure containers. **Only the API talks
 to the browser over HTTP**; the gateway owns WebSockets; the worker owns untrusted
 code; media never passes through either.
 
-```
-                                  ┌──────────────────────────┐
-                                  │   Browser (apps/web)     │
-                                  │   React + Vite : 5173    │
-                                  └───┬──────────┬───────┬───┘
-              HTTP /api/* (cookies)   │          │       │  WebRTC SRTP
-              ┌───────────────────────┘          │       └────────────────┐
-              │                       WSS ?token=│                        │
-              ▼                                  ▼                        ▼
-   ┌─────────────────────┐            ┌────────────────────┐     ┌────────────────┐
-   │     apps/api        │            │  apps/ws-gateway   │     │  another peer  │
-   │  Express  : 4000    │            │   ws lib   : 4100  │     │   (browser)    │
-   │                     │            │                    │     └────────────────┘
-   │ • auth + RBAC       │            │ • webinar rooms    │
-   │ • all domain CRUD   │            │ • interview rooms  │      media is P2P;
-   │ • mints RT tokens   │            │ • chat/polls       │      api + gateway
-   │ • publishes jobs    │            │ • WebRTC signaling │      never see bytes
-   │ • recording upload  │            │ • event timeline   │
-   └──┬───────┬───────┬──┘            └────┬──────────┬────┘
-      │       │       │                    │          │
-      │       │       │  Redis pub/sub     │          │
-      │       │       └────────────────────┘          │
-      │       │                                       │
-      │       │ AMQP publish                          │
-      │       ▼                                       │
-      │  ┌──────────┐    consume    ┌──────────────────────────┐
-      │  │ RabbitMQ │──────────────▶│ apps/execution-worker    │
-      │  │  : 5672  │               │  (no HTTP port)          │
-      │  └──────────┘               │  judge0 | piston | local │
-      │                             └───────────┬──────────────┘
-      ▼                                         │
- ┌──────────┐   ┌────────┐   ┌────────┐        │
- │ Postgres │◀──┤ Redis  │   │ MinIO  │◀───────┘  (all four processes
- │  : 5432  │   │ : 6379 │   │ : 9000 │            share Postgres via
- └──────────┘   └────────┘   └────────┘            @code-nexus/db)
+```mermaid
+flowchart TB
+    subgraph client["Browser"]
+        WEB["apps/web<br/>React + Vite : 5173"]
+        PEER["Another peer<br/>browser"]
+    end
+
+    subgraph ctrl["Control plane"]
+        API["apps/api — Express : 4000<br/>auth + RBAC · all domain CRUD<br/>mints RT tokens · publishes jobs<br/>recording upload"]
+    end
+
+    subgraph rt["Real-time plane"]
+        GW["apps/ws-gateway — ws : 4100<br/>webinar + interview rooms<br/>chat · polls · WebRTC signaling<br/>event timeline"]
+    end
+
+    subgraph exec["Execution plane"]
+        MQ[["RabbitMQ : 5672"]]
+        WORKER["apps/execution-worker<br/>no HTTP port<br/>judge0 · piston · local"]
+    end
+
+    subgraph infra["Infrastructure"]
+        PG[("Postgres : 5432")]
+        REDIS[("Redis : 6379")]
+        MINIO[("MinIO : 9000")]
+    end
+
+    WEB -->|"HTTP /api/* — cookies"| API
+    WEB -->|"WSS ?token="| GW
+    WEB <-->|"WebRTC SRTP — api and gateway never see the bytes"| PEER
+
+    API -->|"AMQP publish"| MQ
+    MQ -->|"consume"| WORKER
+
+    API -->|"publish room events"| REDIS
+    REDIS -->|"pub/sub relay"| GW
+
+    API --> PG
+    GW --> PG
+    WORKER --> PG
+    API -->|"opaque sessions"| REDIS
+    API -->|"recording chunks"| MINIO
 ```
 
 ### The three planes
@@ -263,18 +269,59 @@ interface ApiDeps {
 Every optional dependency is `null`-able **by design**: a missing broker or
 storage backend degrades one feature, never the process.
 
+```mermaid
+flowchart LR
+    subgraph d["ApiDeps — injected at boot"]
+        L["logger"]
+        CF["config"]
+        SS["sessionStore<br/>Redis in prod · in-memory in tests"]
+        PB["publisher — nullable"]
+        RB["roomBus — nullable"]
+        RS["recordingStorage — nullable"]
+    end
+
+    d --> APP["createApp(deps)"]
+
+    PB -.->|"null"| X1["arena / interview run returns 503"]
+    RB -.->|"null"| X2["live fan-out skipped<br/>writes still persist"]
+    RS -.->|"null"| X3["recording uploads return 503"]
+```
+
 **Middleware order** (`app.ts`) — order is significant:
 
-```
-cors → express.json → cookieParser → requestId → csrf
-     → [health, auth, provisioning, profile, dashboard, calendar,
-        drives, applications, mail, arena, contests, webinars,
-        interviews, recordings]
-     → notFound → errorHandler
+```mermaid
+flowchart LR
+    REQ(["Request"]) --> MW1["cors"] --> MW2["express.json"] --> MW3["cookieParser"] --> MW4["requestId"] --> MW5["csrf"] --> ROUTERS{"Domain routers"}
+
+    ROUTERS -->|"no match"| NF["notFound"]
+    NF --> EH["errorHandler"]
+    ROUTERS -->|"throws"| EH
+    ROUTERS -->|"ok"| RES(["Response"])
+    EH --> RES
+
+    subgraph mods["health · auth · provisioning · profile · dashboard · calendar · drives · applications · mail · arena · contests · webinars · interviews · recordings"]
+        direction LR
+    end
+    ROUTERS --- mods
 ```
 
 `express.json()` skips non-JSON bodies, which is what lets the recordings router
 attach its own `express.raw()` parser for binary chunks on one route only.
+
+```mermaid
+flowchart LR
+    subgraph mod["src/modules/name/ — every module has the same four files"]
+        RT["name.router.ts<br/>route table · guards · zod parse · audit log<br/>no business logic"]
+        SV["name.service.ts<br/>business rules · ownership checks · persistence"]
+        SC["name.schema.ts<br/>re-exports shared zod + param schemas"]
+        TS["name.integration.test.ts<br/>supertest against a real Postgres"]
+    end
+
+    RT --> SV --> DB[("Postgres via @code-nexus/db")]
+    RT -.->|"validates with"| SC
+    SV -.->|"validates with"| SC
+    TS -.->|"drives"| RT
+```
 
 **Module anatomy.** Every domain module under `src/modules/<name>/` follows the
 same four-file shape:
@@ -303,6 +350,31 @@ loses access on its next request rather than at next login.
 **Dev proxy.** The app calls relative `/api/*`, which Vite proxies to port 4000.
 Same-origin means cookies and CSRF work with no CORS configuration. For a
 split-origin deploy set `WEB_ORIGIN` on the API.
+
+```mermaid
+flowchart TB
+    subgraph spa["apps/web — React 19 · Vite · Tailwind v4 · React Router : 5173"]
+        ME["GET /auth/me<br/>the only source of identity<br/>never localStorage"]
+        TQ["TanStack Query<br/>all server state · no client store"]
+        subgraph surf["Surfaces"]
+            AR["Arena workspace<br/>Monaco lazy-loaded · console · polling"]
+            CO["Contest arena<br/>countdown · one committed attempt"]
+            WB["Webinar room<br/>hls.js · chat · polls · presence"]
+            IV["Interview room<br/>replaces the app shell while LIVE"]
+            RP["Recording player<br/>video + chaptered timeline"]
+        end
+        ME --> TQ
+        TQ --> surf
+    end
+
+    TQ -->|"relative /api/*"| PX["Vite dev proxy — same origin,<br/>so cookies and CSRF work with no CORS"]
+    PX --> API["apps/api : 4000"]
+
+    WB -->|"WSS ?token="| GW["apps/ws-gateway : 4100"]
+    IV -->|"WSS ?token="| GW
+    WB -->|"HLS playback"| MS["Media server"]
+    IV <-->|"WebRTC SRTP"| PEER["Peer browser"]
+```
 
 **Notable UI surfaces**
 
@@ -356,6 +428,27 @@ interface RtTokenPayload {
 `webinar:*` and `interview:*`. A message published by any API or gateway instance
 is relayed into every instance's local rooms, so N gateways stay consistent.
 
+```mermaid
+flowchart TB
+    CL["Client connects<br/>wss://host/ws?token="] --> VF{"verifyRtToken<br/>HMAC signature + expiry<br/>shared RT_TOKEN_SECRET"}
+
+    VF -->|"invalid or expired"| CLOSE["refuse — the gateway never<br/>reads the session store"]
+    VF -->|"kind = webinar"| WR["Webinar room<br/>chat · polls · presence · attendance"]
+    VF -->|"kind = interview"| IR["Interview room<br/>directed RTC relay · shared code snapshot<br/>surface state · question cache · IDE write-lock"]
+
+    WR --> REG["rooms.ts — RoomRegistry, pure<br/>join · leave · broadcast · sendTo · roster · drain"]
+    IR --> REG
+
+    REG --> EV["events.ts — EventBuffer<br/>batched timeline, drained on shutdown"]
+    REG --> HD["handlers.ts<br/>the only DB side effects"]
+    HD --> PG[("Postgres")]
+    EV --> PG
+
+    API["apps/api"] -->|"publish host-originated events"| R[("Redis pub/sub")]
+    R -->|"psubscribe webinar:* and interview:*"| REG
+    REG -.->|"same channels"| R
+```
+
 **Internal structure**
 
 | File           | Contents                                                                                                                                                                                               |
@@ -395,6 +488,34 @@ reason: **the API must never execute user code.**
 `{ submissionPublicId }`. The worker loads the submission and testcases from
 Postgres by id — **source code and testcases never enter the broker** — runs them,
 grades, and persists the result. The browser polls the API.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as apps/web
+    participant A as apps/api
+    participant Q as RabbitMQ
+    participant K as execution-worker
+    participant P as Postgres
+
+    W->>A: POST /arena/questions/{slug}/run
+    A->>P: write Submission QUEUED
+    A->>Q: publish { submissionPublicId }
+    Note over A,Q: source code and testcases never enter the broker
+    A-->>W: 202 with submission publicId
+
+    Q->>K: consume, prefetch-bounded
+    K->>P: load source + testcases by id
+    K->>K: run on judge0 / piston / local
+    K->>P: persist DONE or ERROR + verdict
+    Note over K: idempotent — a redelivered terminal job is a no-op<br/>one retry, then dead-letter
+
+    loop until terminal
+        W->>A: GET /arena/submissions/{id}
+        A->>P: read
+        A-->>W: status + verdict
+    end
+```
 
 **Pluggable engines** (`EXECUTION_ENGINE`):
 
@@ -532,36 +653,69 @@ persist a `RecordingAccessLog` row.
 
 ### 1. Provisioning and first login
 
-```
-admin ──POST /admin/universities──▶ api ──tx──▶ User(PENDING_PROFILE, mustReset)
-                                                + University
-       ◀── { publicId, tempPassword }  (one-time, never logged)
+```mermaid
+sequenceDiagram
+    autonumber
+    participant AD as Platform admin
+    participant API as apps/api
+    participant UNI as University
+    participant STU as Student
 
-university ──POST /auth/login (temp pw)──▶ 200 + session
-           ──POST /auth/password────────▶ mustResetPassword = false
-           ──POST /universities/students─▶ creates Student users the same way
+    AD->>API: POST /admin/universities
+    API->>API: one transaction — User PENDING_PROFILE + mustReset, University
+    API-->>AD: { publicId, tempPassword } — one-time, never logged
 
-student ──login──▶ forced password change ──▶ POST /auth/complete-onboarding
-                                              (validated profile) ──▶ ACTIVE
+    UNI->>API: POST /auth/login with the temp password
+    API-->>UNI: 200 + session
+    UNI->>API: POST /auth/password
+    API-->>UNI: mustResetPassword = false
+    UNI->>API: POST /universities/students
+    API-->>STU: Student users created the same way
+
+    STU->>API: login, forced password change
+    STU->>API: POST /auth/complete-onboarding with a validated profile
+    API-->>STU: status ACTIVE
 ```
 
 ### 2. Placement drive funnel
 
-```
-company ──POST /drives──▶ DRAFT ──publish──▶ OPEN ──close/deadline──▶ CLOSED
-                                              │
-student ──GET /drives (eligible only)─────────┤
-        ──POST /drives/:id/apply──▶ [server re-checks eligibility] ──▶ APPLIED
+```mermaid
+flowchart LR
+    D1["Company<br/>POST /drives"] --> DRAFT
+    subgraph life["Drive lifecycle"]
+        direction LR
+        DRAFT -->|"publish"| OPEN
+        OPEN -->|"close or deadline passes"| CLOSED
+    end
+
+    OPEN --> G["Student<br/>GET /drives — eligible only"]
+    G --> AP["POST /drives/{id}/apply"]
+    AP --> CHK{"server re-checks<br/>evaluateEligibility"}
+    CHK -->|"pass"| APPLIED["Application APPLIED"]
+    CHK -->|"fail"| NO["refused — the UI is never the gate"]
 ```
 
 Application state machine — declared once in `@code-nexus/types`, enforced by the
 API, illegal jumps are `409`:
 
-```
-APPLIED ──shortlist──▶ SHORTLISTED ──offer──▶ OFFERED   (terminal)
-   │                        │
-   └────reject──────────────┴──────reject───▶ REJECTED  (terminal)
-APPLIED / SHORTLISTED ──student withdraw────▶ WITHDRAWN (terminal)
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> APPLIED
+    APPLIED --> SHORTLISTED: shortlist
+    SHORTLISTED --> OFFERED: offer
+    APPLIED --> REJECTED: reject
+    SHORTLISTED --> REJECTED: reject
+    APPLIED --> WITHDRAWN: student withdraw
+    SHORTLISTED --> WITHDRAWN: student withdraw
+    OFFERED --> [*]
+    REJECTED --> [*]
+    WITHDRAWN --> [*]
+    note right of OFFERED
+        OFFERED and REJECTED also write a system mail
+        from the company in the same transaction.
+        Any jump not drawn here is a 409.
+    end note
 ```
 
 **Eligibility** (`evaluateEligibility`) is a pure function shared by client and
@@ -576,16 +730,26 @@ succeed while silently dropping the notification.
 
 ### 3. Code arena execution
 
-```
-web ──POST /arena/questions/:slug/run──▶ api ──▶ Submission(QUEUED)
-                                            └──▶ RabbitMQ { submissionPublicId }
-                                                        │
-                              execution-worker ◀────────┘
-                                      │ loads code + testcases from Postgres
-                                      │ runs on judge0 | piston | local
-                                      ▼
-                                  Postgres (DONE/ERROR + verdict)
-web ──poll GET /arena/submissions/:id──▶ api ──▶ reads Postgres
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as apps/web
+    participant A as apps/api
+    participant Q as RabbitMQ
+    participant K as execution-worker
+    participant P as Postgres
+
+    W->>A: POST /arena/questions/{slug}/run
+    A->>A: per-student in-flight cap, else 429
+    A->>P: Submission QUEUED
+    A->>Q: { submissionPublicId }
+    Q->>K: deliver
+    K->>P: load code + testcases
+    K->>K: run on judge0 / piston / local, grade whitespace-insensitively
+    K->>P: DONE or ERROR + verdict
+    W->>A: poll GET /arena/submissions/{id}
+    A->>P: read
+    A-->>W: verdict — hidden testcases return counts<br/>and the first failing index only
 ```
 
 Model is **stdin/stdout**: the program reads stdin and writes stdout; a testcase
@@ -601,8 +765,23 @@ worker, queue and grading are untouched. A contest submission is an ordinary
 
 Phase is **derived from time** (`deriveContestPhase`), so there is no scheduler:
 
-```
-upcoming ──startsAt──▶ open (entry allowed) ──entryDeadline──▶ running ──▶ ended
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> upcoming
+    upcoming --> open: startsAt
+    open --> running: entryDeadline
+    running --> ended: window closes
+    ended --> [*]
+    note right of upcoming
+        Phase is derived from time by deriveContestPhase,
+        so there is no scheduler.
+    end note
+    note right of running
+        Each student gets durationMinutes from when they
+        personally start. Starting is one-way; Finish and
+        Submit, or the personal timer, is final.
+    end note
 ```
 
 Each student gets `durationMinutes` **from when they personally start**, even if
@@ -612,14 +791,28 @@ Contest activity is excluded from practice-arena stats (`contestId = null`).
 
 ### 5. Webinars — one-to-many
 
-```
- host (OBS) ──RTMP──▶ media server ──HLS .m3u8──▶ viewers   [media plane]
+```mermaid
+flowchart TB
+    subgraph media["Media plane — never passes through api or gateway"]
+        OBS["Host — OBS"] -->|"RTMP ingest"| MS["Media server<br/>nginx-rtmp or stub"]
+        MS -->|"HLS .m3u8 playback"| VW["Viewers — hls.js"]
+    end
 
- host/viewer ──GET /webinars/:id/rt-token──▶ api
-             ──ws://gateway/ws?token=…────▶ ws-gateway      [real-time plane]
-                     chat · polls · presence · attendance
+    subgraph control["Control plane"]
+        U["Host / viewer"] -->|"GET /webinars/{id}/rt-token"| API["apps/api"]
+        API -->|"short-lived signed token"| U
+    end
 
- api ──publish poll:opened / webinar:ended──▶ Redis ──▶ every gateway ──▶ rooms
+    subgraph realtime["Real-time plane"]
+        U -->|"wss://gateway/ws?token="| GW["apps/ws-gateway"]
+        GW --- ROOM["chat · polls · presence<br/>attendance over connected intervals,<br/>de-duped across tabs and reconnects"]
+    end
+
+    API -->|"publish poll:opened, webinar:ended"| R[("Redis")]
+    R -->|"fan out to every gateway"| GW
+
+    API -.->|"streamKey and ingestUrl are host-only"| OBS
+    API -.->|"viewers receive playbackUrl only"| VW
 ```
 
 `streamKey`/`ingestUrl` are **host-only secrets**; viewers receive only
@@ -629,22 +822,50 @@ intervals and de-dupes overlapping tabs and flaky reconnects.
 
 ### 6. Live interviews — few-to-few
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> SCHEDULED
+    SCHEDULED --> LIVE: go-live
+    LIVE --> ENDED: end
+    ENDED --> [*]
+    note right of ENDED
+        Ending saves the final codeSnapshot, finalizes any
+        recording, and broadcasts the room-ended event.
+    end note
 ```
-company ──POST /interviews──▶ SCHEDULED ──go-live──▶ LIVE ──end──▶ ENDED
 
-both peers ──GET /rt-token + /rtc-config──▶ api
-           ──ws://gateway/ws?token=…─────▶ ws-gateway
-                                              │
-   rtc:offer/answer/ice  ──directed to one peer (never broadcast)
-                                              │
-   ┌──────────────────────────────────────────┴───────┐
-   │            WebRTC SRTP, browser ↔ browser        │  ← no server in the path
-   └──────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    autonumber
+    participant I as Interviewer
+    participant API as apps/api
+    participant GW as apps/ws-gateway
+    participant C as Candidate
 
-   shared surfaces over the same socket:
-     surface:set   → whole room switches call ↔ whiteboard ↔ IDE
-     code:update   → candidate only; interviewers receive read-only
-     question:set  → interviewer pins from the bank (via api → Redis → room)
+    I->>API: GET /interviews/{id}/rt-token and /rtc-config
+    C->>API: GET /interviews/{id}/rt-token and /rtc-config
+    I->>GW: connect ws?token=
+    C->>GW: connect ws?token=
+    GW-->>I: join replay — code snapshot, pinned question, active surface
+    GW-->>C: join replay
+
+    Note over I,C: isOfferer — the lexicographically smaller peer id offers,<br/>so exactly one side initiates per pair
+    I->>GW: rtc:offer with to = candidate peer id
+    GW->>C: delivered to that peer alone, never broadcast
+    C->>GW: rtc:answer, rtc:ice
+    GW->>I: rtc:answer, rtc:ice
+    Note over GW: the gateway never parses SDP
+    I-->>C: WebRTC SRTP, browser to browser — no server in the path
+
+    C->>GW: code:update
+    GW-->>I: shared IDE streams read-only
+    Note over GW: code:update from any other role is refused with FORBIDDEN
+    I->>GW: surface:set
+    GW-->>C: whole room switches call / whiteboard / IDE
+    I->>API: pin a question from the bank
+    API->>GW: via Redis
+    GW-->>C: question:set
 ```
 
 Ending saves the final `codeSnapshot`, finalizes any recording, and broadcasts
@@ -660,21 +881,23 @@ transition, owned by the drive's company.
 Because interview media is peer-to-peer, **there is no server-side stream to
 record**. Capture happens in one elected interviewer's browser.
 
-```
-peers ──elect recorder (smallest interviewer peerId, candidate ineligible)
-          │
-          ▼
-  MediaRecorder (local + remote video, BOTH audio tracks mixed)
-          │  5s timeslices
-          ▼
-  POST /recordings/:id/chunk?ordinal=N ──▶ api ──▶ RecordingStorage
-                                                    ├── local → disk (default)
-                                                    └── s3    → MinIO / AWS
-          │
-   complete ──▶ status READY, segments ordered
+```mermaid
+flowchart TB
+    EL["electRecorder<br/>smallest interviewer peer id · candidate ineligible"] --> MR["MediaRecorder in that browser<br/>local + remote video, both audio tracks mixed"]
+    MR -->|"5s timeslices"| UP["POST /recordings/{id}/chunk?ordinal=N"]
+    UP --> API["apps/api — store and forward,<br/>the interview is unaffected if it fails"]
+    API --> DRV{"RECORDING_STORAGE"}
+    DRV -->|"local"| DISK[("Disk — default")]
+    DRV -->|"s3"| S3[("MinIO or AWS")]
 
-review ──GET /recordings/:id/playback──▶ signed URL (s3) or api stream (local)
-       ──GET timeline──▶ chapters ──click──▶ locateOffset(global) → (segment, local)
+    API --> CMP["complete → status READY, segments ordered"]
+    MR -.->|"recorder tab dies"| EL2["next peer elected, starts a NEW segment<br/>splicing would need server-side ffmpeg"]
+    EL2 --> CMP
+
+    CMP --> PB["GET /recordings/{id}/playback<br/>signed URL for s3, api stream for local"]
+    CMP --> TL["GET timeline — chapters from deliberate acts only:<br/>run/submit · surface switch · join/leave<br/>question pinned · screen-share · recording start/stop"]
+    TL -->|"click a chapter"| LOC["locateOffset maps a global offset<br/>onto segment + local offset"]
+    LOC --> PB
 ```
 
 **Consent is a functional requirement.** The candidate is told before capture
@@ -711,28 +934,72 @@ candidate cannot delete the record of their own assessment.
 29 models across 11 migrations. Every model carries the base convention
 (`id`, `publicId`, `createdAt`, `updatedAt`, `deletedAt`).
 
+**Identity and the placement funnel**
+
+```mermaid
+erDiagram
+    User ||--o| Student : "1:1 profile"
+    User ||--o| Recruiter : "1:1 profile"
+    User ||--o| University : "1:1 profile"
+    User ||--o| Company : "1:1 profile"
+    User ||--o| PlatformAdmin : "1:1 profile"
+
+    University ||--o{ Student : "provisions"
+    Company ||--o{ Recruiter : "employs"
+    Company ||--o{ Drive : "posts"
+    University ||--o{ Drive : "targets"
+    Drive ||--o{ Application : "receives"
+    Student ||--o{ Application : "submits"
 ```
-User ──1:1── Student | Recruiter | University | Company | PlatformAdmin
-              │            │           │            │
-              │            │           │            └── Drive ──▶ Application
-              │            │           └── Student[]        ▲
-              │            └── Company                      │
-              └───────────────────────────────────────────-─┘
 
-Question ──▶ TestCase (isSample: visible | hidden: never serialized)
-    │   └──▶ Submission (tagged contestId? interviewId? → same pipeline)
-    └──▶ ContestQuestion ──▶ Contest ──▶ ContestParticipant
+**Arena and contests — one pipeline, three entry points**
 
-Webinar ──▶ WebinarMessage | WebinarPoll ──▶ WebinarPollOption ──▶ WebinarPollVote
-        └─▶ WebinarAttendance
+```mermaid
+erDiagram
+    Question ||--o{ TestCase : "sample visible, hidden never serialized"
+    Question ||--o{ Submission : "graded against"
+    Question ||--o{ ContestQuestion : "included in"
+    ContestQuestion }o--|| Contest : ""
+    Contest ||--o{ ContestParticipant : "per-student attempt"
+    Student ||--o{ Submission : "authors"
+    Submission {
+        string contestId "nullable — tags a contest attempt"
+        string interviewId "nullable — tags an interview run"
+    }
+```
 
-Interview ──▶ InterviewParticipant   (CANDIDATE | INTERVIEWER)
-          ├─▶ InterviewFeedback      (private: host org + admin only)
-          ├─▶ InterviewEvent         (the review timeline, offsetMs from startedAt)
-          └─▶ InterviewRecording ──▶ RecordingSegment (ordered chunks)
-                                 └─▶ RecordingAccessLog (who viewed the video)
+**Webinars**
 
-Mail ──▶ MailRecipient (per-recipient readAt)
+```mermaid
+erDiagram
+    Webinar ||--o{ WebinarMessage : "chat"
+    Webinar ||--o{ WebinarPoll : ""
+    Webinar ||--o{ WebinarAttendance : "connected intervals"
+    WebinarPoll ||--o{ WebinarPollOption : ""
+    WebinarPollOption ||--o{ WebinarPollVote : ""
+```
+
+**Interviews, recording and review**
+
+```mermaid
+erDiagram
+    Student ||--o{ Interview : "is the candidate"
+    Interview ||--o{ InterviewParticipant : "CANDIDATE or INTERVIEWER"
+    Interview ||--o{ InterviewFeedback : "private — host org and admin only"
+    Interview ||--o{ InterviewEvent : "review timeline, offsetMs from startedAt"
+    Interview ||--o| InterviewRecording : ""
+    InterviewRecording ||--o{ RecordingSegment : "ordered chunks"
+    InterviewRecording ||--o{ RecordingAccessLog : "who viewed the video"
+    Interview }o--o| Application : "feedback may advance it"
+```
+
+**Mail**
+
+```mermaid
+erDiagram
+    Mail ||--o{ MailRecipient : "per-recipient readAt"
+    User ||--o{ Mail : "sends"
+    User ||--o{ MailRecipient : "receives"
 ```
 
 **Enums** (21): `Role`, `UserStatus`, `DriveStatus`, `ApplicationStatus`, `Topic`,
