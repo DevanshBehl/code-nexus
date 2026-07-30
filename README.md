@@ -223,10 +223,6 @@ packages/
   tsconfig/            shared TS bases
 
 docker/                media server config (nginx-rtmp)
-<<<<<<< HEAD
-prompt_phase1..10.md   the specification each phase was built from
-=======
->>>>>>> 3991721 (first implementation complete)
 report.md              original architecture study
 ```
 
