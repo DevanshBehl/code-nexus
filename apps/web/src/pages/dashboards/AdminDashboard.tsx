@@ -46,7 +46,7 @@ export function AdminDashboard() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <Panel title="Suspended accounts" className="lg:col-span-1">
                 <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10 text-red-500">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-danger-soft text-danger">
                     <ShieldAlert className="h-6 w-6" />
                   </div>
                   <p className="text-3xl font-semibold tracking-tight text-fg">

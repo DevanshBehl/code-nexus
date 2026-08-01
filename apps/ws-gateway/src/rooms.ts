@@ -27,6 +27,11 @@ export interface RoomConn {
   displayName?: string;
   /** Deliver a server frame to this connection. */
   send: (msg: unknown) => void;
+  /**
+   * Hang this connection up (used to retire a person's older socket when they
+   * open a newer one). Optional: the webinar rooms never evict.
+   */
+  close?: (code: number, reason: string) => void;
 }
 
 /** Registry of live connections, grouped into per-room maps. */

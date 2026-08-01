@@ -48,6 +48,21 @@ export const INTERVIEW_CHAT_MAX = 2000;
 export const CODE_MAX_LENGTH = 100_000; // bound the synced document
 export const FEEDBACK_NOTES_MAX = 5000;
 export const INTERVIEW_HEARTBEAT_MS = 15_000;
+/**
+ * A socket that goes this long without a word is treated as gone and dropped.
+ *
+ * An interview room is a mesh: every connection in the roster becomes a tile on
+ * everybody's screen, so a socket the server never saw die is not a harmless
+ * leak — it is a second frozen copy of a real person in the call. Three missed
+ * heartbeats is the same tolerance the webinar rooms use.
+ */
+export const INTERVIEW_STALE_AFTER_MS = INTERVIEW_HEARTBEAT_MS * 3;
+/**
+ * Close code for a connection the gateway retired because the same person opened
+ * a newer one. Clients must NOT reconnect on it — one live socket per person per
+ * room is the rule that keeps the roster equal to the people in the interview.
+ */
+export const INTERVIEW_CLOSE_REPLACED = 4409;
 /** Per-connection chat send budget at the gateway (token bucket). */
 export const INTERVIEW_CHAT_RATE = { capacity: 5, refillPerSec: 1 } as const;
 

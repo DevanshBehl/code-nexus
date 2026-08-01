@@ -86,12 +86,12 @@ export function StudentDriveDetail() {
                 <div className="mb-4 flex items-start gap-2 text-[13px]">
                   {eligible ? (
                     <>
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 text-success" />
                       <span className="text-fg">You're eligible for this drive.</span>
                     </>
                   ) : (
                     <div className="flex items-start gap-2">
-                      <XCircle className="mt-0.5 h-4 w-4 text-red-500" />
+                      <XCircle className="mt-0.5 h-4 w-4 text-danger" />
                       <div>
                         <p className="font-medium text-fg">You're not eligible:</p>
                         <ul className="mt-1 list-inside list-disc text-muted">
@@ -106,7 +106,7 @@ export function StudentDriveDetail() {
               ) : null}
 
               {error ? (
-                <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[13px] text-red-500">
+                <p className="mb-3 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[13px] text-danger">
                   {error}
                 </p>
               ) : null}

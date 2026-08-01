@@ -186,7 +186,7 @@ export function ContestArena() {
         </div>
         <div className="flex items-center gap-3">
           {attemptActive && c?.attemptEndsAt ? (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-success-line bg-success-soft px-2.5 py-1 text-[12px] font-medium text-success">
               <Timer className="h-3.5 w-3.5" />
               <Countdown target={c.attemptEndsAt} onElapsed={toLeaderboard} />
             </span>
@@ -210,7 +210,7 @@ export function ContestArena() {
                   finish.mutate();
                 }
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-success-solid px-3.5 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
             >
               <Flag className="h-3.5 w-3.5" /> Finish &amp; submit
             </button>
@@ -221,7 +221,7 @@ export function ContestArena() {
       {blocked ? (
         <div
           role="status"
-          className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-[12px] text-amber-600 dark:text-amber-300"
+          className="shrink-0 bg-warn-soft px-4 py-2 text-center text-[12px] text-warn"
         >
           {blocked}
         </div>
@@ -258,7 +258,7 @@ export function ContestArena() {
                   }`}
                 >
                   {q.status === 'solved' ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                    <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                   ) : null}
                   Q{i + 1}
                 </button>
@@ -330,7 +330,7 @@ export function ContestArena() {
                     type="button"
                     disabled={pending || !current}
                     onClick={() => trigger('submit')}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-success-solid px-3.5 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
                   >
                     {pending ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -351,7 +351,7 @@ export function ContestArena() {
             <div className="min-h-[180px] shrink-0 border-t border-line bg-bg p-4">
               <p className="mono-label mb-2 text-[10px] text-faint">Result</p>
               {error ? (
-                <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[13px] text-red-500">
+                <p className="rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[13px] text-danger">
                   {error}
                 </p>
               ) : !activeId ? (
@@ -380,6 +380,7 @@ export function ContestArena() {
         <FullscreenGate
           open={!fullscreen.held}
           onEnter={fullscreen.request}
+          refused={fullscreen.refused}
           title="This contest runs fullscreen"
           detail="Your attempt needs the whole screen. The clock is still running — enter fullscreen to get back to your questions."
         />
@@ -397,7 +398,7 @@ export function ContestArena() {
 function ContestResult({ sub }: { sub: SubmissionDto }) {
   if (sub.status === 'ERROR') {
     return (
-      <p className="inline-flex items-center gap-2 text-[13px] text-red-500">
+      <p className="inline-flex items-center gap-2 text-[13px] text-danger">
         <XCircle className="h-4 w-4" /> Execution failed — try again.
       </p>
     );
@@ -407,7 +408,7 @@ function ContestResult({ sub }: { sub: SubmissionDto }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <span
-          className={`inline-flex items-center gap-2 text-sm font-semibold ${ok ? 'text-emerald-500' : 'text-red-500'}`}
+          className={`inline-flex items-center gap-2 text-sm font-semibold ${ok ? 'text-success' : 'text-danger'}`}
         >
           {ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
           {sub.verdict ? VERDICT_LABELS[sub.verdict] : '—'}

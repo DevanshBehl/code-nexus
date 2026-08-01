@@ -14,11 +14,14 @@ export function FullscreenGate({
   onEnter,
   title,
   detail,
+  refused,
 }: {
   open: boolean;
   onEnter: () => void;
   title: string;
   detail: string;
+  /** The browser turned the last request down — offer the keyboard way in. */
+  refused?: boolean;
 }) {
   if (!open) return null;
   return (
@@ -42,6 +45,12 @@ export function FullscreenGate({
         >
           <Maximize className="h-4 w-4" aria-hidden="true" /> Enter fullscreen
         </button>
+        {refused ? (
+          <p className="mt-3 text-[12px] leading-relaxed text-amber-300">
+            Your browser turned that request down. Allow fullscreen for this site — the permission
+            icon sits in the address bar — then press the button again.
+          </p>
+        ) : null}
       </div>
     </div>
   );

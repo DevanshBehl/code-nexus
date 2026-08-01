@@ -2,8 +2,8 @@ import type { ApplicationStatus, DriveStatus } from '@code-nexus/types';
 
 const DRIVE_STYLES: Record<DriveStatus, string> = {
   DRAFT: 'border-line bg-surface-2 text-muted',
-  OPEN: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  CLOSED: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400',
+  OPEN: 'border-success-line bg-success-soft text-success',
+  CLOSED: 'border-danger-line bg-danger-soft text-danger',
 };
 
 const DRIVE_LABEL: Record<DriveStatus, string> = {
@@ -23,10 +23,10 @@ export function DriveStatusBadge({ status }: { status: DriveStatus }) {
 }
 
 const APP_STYLES: Record<ApplicationStatus, string> = {
-  APPLIED: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  SHORTLISTED: 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-  OFFERED: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  REJECTED: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400',
+  APPLIED: 'border-info-line bg-info-soft text-info',
+  SHORTLISTED: 'border-special-line bg-special-soft text-special',
+  OFFERED: 'border-success-line bg-success-soft text-success',
+  REJECTED: 'border-danger-line bg-danger-soft text-danger',
   WITHDRAWN: 'border-line bg-surface-2 text-muted',
 };
 

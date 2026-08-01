@@ -65,7 +65,7 @@ function SaveBar({ pending, saved }: { pending: boolean; saved: boolean }) {
         {pending ? 'Saving…' : 'Save changes'}
       </button>
       {saved ? (
-        <span className="text-[13px] text-emerald-600 dark:text-emerald-400">Saved</span>
+        <span className="text-[13px] text-success">Saved</span>
       ) : null}
     </div>
   );

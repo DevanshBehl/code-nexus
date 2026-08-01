@@ -171,7 +171,7 @@ export function Workspace() {
               <span className="truncate text-[13.5px] font-semibold text-fg">{question.title}</span>
               <DifficultyBadge difficulty={question.difficulty} />
               {question.status === 'solved' ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <span className="inline-flex items-center gap-1 rounded-full border border-success-line bg-success-soft px-2 py-0.5 text-[10px] font-medium text-success">
                   <CheckCircle2 className="h-3 w-3" /> Solved
                 </span>
               ) : null}
@@ -185,7 +185,7 @@ export function Workspace() {
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading problem…
           </div>
         ) : questionQuery.isError ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-red-500">
+          <div className="flex flex-1 items-center justify-center text-sm text-danger">
             Failed to load problem.
           </div>
         ) : question ? (
@@ -264,7 +264,7 @@ export function Workspace() {
                       type="button"
                       disabled={pending}
                       onClick={() => trigger('submit')}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3.5 py-1.5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-success-solid px-3.5 py-1.5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:opacity-90 disabled:opacity-50"
                     >
                       {pending ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -421,7 +421,7 @@ function SubmissionsView({ rows }: { rows: SubmissionListRow[] }) {
           <li key={s.publicId} className="flex items-center justify-between gap-3 py-2.5">
             <span
               className={`text-[13px] font-medium ${
-                !done ? 'text-muted' : ok ? 'text-emerald-500' : 'text-red-500'
+                !done ? 'text-muted' : ok ? 'text-success' : 'text-danger'
               }`}
             >
               {!done ? titleCase(s.status) : s.verdict ? VERDICT_LABELS[s.verdict] : '—'}
@@ -470,7 +470,7 @@ function StatusPill({
   sub?: SubmissionDto;
   error?: string;
 }) {
-  if (error) return <span className="text-[12px] font-medium text-red-500">Error</span>;
+  if (error) return <span className="text-[12px] font-medium text-danger">Error</span>;
   if (pending)
     return (
       <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">
@@ -481,7 +481,7 @@ function StatusPill({
   if (sub && sub.status === 'DONE' && sub.verdict) {
     const ok = isAccepted(sub.verdict);
     return (
-      <span className={`text-[12px] font-semibold ${ok ? 'text-emerald-500' : 'text-red-500'}`}>
+      <span className={`text-[12px] font-semibold ${ok ? 'text-success' : 'text-danger'}`}>
         {VERDICT_LABELS[sub.verdict]}
       </span>
     );
@@ -502,7 +502,7 @@ function ResultView({
 }) {
   if (error) {
     return (
-      <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[13px] text-red-500">
+      <p className="rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[13px] text-danger">
         {error}
       </p>
     );
@@ -525,7 +525,7 @@ function ResultView({
   if (!sub) return null;
   if (sub.status === 'ERROR') {
     return (
-      <p className="inline-flex items-center gap-2 text-[13px] text-red-500">
+      <p className="inline-flex items-center gap-2 text-[13px] text-danger">
         <XCircle className="h-4 w-4" /> Execution failed — the judge may be unavailable. Try again.
       </p>
     );
@@ -536,12 +536,12 @@ function ResultView({
     <div className="space-y-4">
       <div
         className={`flex flex-wrap items-center gap-3 rounded-lg border px-3.5 py-2.5 ${
-          ok ? 'border-emerald-500/25 bg-emerald-500/[0.07]' : 'border-red-500/25 bg-red-500/[0.06]'
+          ok ? 'border-success-line bg-success-soft' : 'border-danger-line bg-danger-soft'
         }`}
       >
         <span
           className={`inline-flex items-center gap-2 text-[15px] font-semibold ${
-            ok ? 'text-emerald-500' : 'text-red-500'
+            ok ? 'text-success' : 'text-danger'
           }`}
         >
           {ok ? <CheckCircle2 className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
@@ -587,7 +587,7 @@ function OutputBlock({
   value: string;
   tone?: 'error' | 'warn';
 }) {
-  const color = tone === 'error' ? 'text-red-500' : tone === 'warn' ? 'text-amber-500' : 'text-fg';
+  const color = tone === 'error' ? 'text-danger' : tone === 'warn' ? 'text-warn' : 'text-fg';
   return (
     <div>
       <p className="mono-label mb-1 text-[9px] text-faint">{label}</p>

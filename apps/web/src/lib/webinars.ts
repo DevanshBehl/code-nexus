@@ -20,8 +20,8 @@ export const STATUS_LABEL: Record<WebinarStatus, string> = {
 
 export const STATUS_STYLE: Record<WebinarStatus, string> = {
   DRAFT: 'border-line bg-surface-2 text-muted',
-  SCHEDULED: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  LIVE: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400',
+  SCHEDULED: 'border-info-line bg-info-soft text-info',
+  LIVE: 'border-danger-line bg-danger-soft text-danger',
   ENDED: 'border-line bg-surface-2 text-muted',
   CANCELLED: 'border-line bg-surface-2 text-faint',
 };

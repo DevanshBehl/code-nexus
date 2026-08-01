@@ -21,6 +21,26 @@
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
 
+  /* Semantic status colours. Each theme picks a tone that actually clears
+     4.5:1 against its own surfaces, so no component needs a `dark:` variant. */
+  --color-success: var(--success);
+  --color-success-solid: var(--success-solid);
+  --color-success-soft: var(--success-soft);
+  --color-success-line: var(--success-line);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-line: var(--warn-line);
+  --color-danger: var(--danger);
+  --color-danger-solid: var(--danger-solid);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-line: var(--danger-line);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-line: var(--info-line);
+  --color-special: var(--special);
+  --color-special-soft: var(--special-soft);
+  --color-special-line: var(--special-line);
+
   --font-sans:
     'Inter', ui-sans-serif, system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica,
     Arial, sans-serif;
@@ -31,23 +51,45 @@
   --shadow-lift: var(--shadow-lift-value);
 }
 
+/* Light theme. Structure here is carried entirely by hairlines and microcopy,
+   so every token below is held to a floor: --line reads as a real edge on
+   white, --line-strong clears 3:1 (WCAG 1.4.11) for input and control borders,
+   and --faint clears 4.5:1 because it is used for labels, not decoration. */
 :root,
 [data-theme='light'] {
   color-scheme: light;
   --bg: #fdfdfc;
-  --bg-subtle: #f6f5f2;
+  --bg-subtle: #f4f2ec;
   --surface: #ffffff;
-  --surface-2: #f7f6f3;
+  --surface-2: #f2f0e9;
   --fg: #17150f;
-  --muted: #57534e;
-  --faint: #a8a29a;
-  --line: #e8e6e0;
-  --line-strong: #d8d5cd;
-  --accent: #4f46e5;
-  --accent-soft: rgba(79, 70, 229, 0.1);
-  --grid-line: rgba(23, 21, 15, 0.045);
-  --shadow-soft-value: 0 1px 2px rgba(23, 21, 15, 0.04), 0 12px 28px rgba(23, 21, 15, 0.06);
-  --shadow-lift-value: 0 1px 3px rgba(23, 21, 15, 0.06), 0 30px 60px rgba(23, 21, 15, 0.12);
+  --muted: #4a463f; /* 9.4:1 on surface */
+  --faint: #78736a; /* 4.7:1 on surface */
+  --line: #cdc8bb; /* 1.7:1 — a visible hairline, not a suggestion */
+  --line-strong: #979083; /* 3.2:1 on surface */
+  --accent: #4338ca; /* 7.9:1 on surface */
+  --accent-soft: rgba(67, 56, 202, 0.12);
+  --grid-line: rgba(23, 21, 15, 0.1);
+  --shadow-soft-value: 0 1px 2px rgba(23, 21, 15, 0.07), 0 12px 28px rgba(23, 21, 15, 0.1);
+  --shadow-lift-value: 0 1px 3px rgba(23, 21, 15, 0.1), 0 30px 60px rgba(23, 21, 15, 0.18);
+
+  --success: #046c4e;
+  --success-solid: #047857;
+  --success-soft: rgba(4, 108, 78, 0.1);
+  --success-line: rgba(4, 108, 78, 0.38);
+  --warn: #a4560a;
+  --warn-soft: rgba(164, 86, 10, 0.1);
+  --warn-line: rgba(164, 86, 10, 0.38);
+  --danger: #c92a2a;
+  --danger-solid: #c81e1e;
+  --danger-soft: rgba(201, 42, 42, 0.09);
+  --danger-line: rgba(201, 42, 42, 0.34);
+  --info: #0369a1;
+  --info-soft: rgba(3, 105, 161, 0.1);
+  --info-line: rgba(3, 105, 161, 0.36);
+  --special: #6d28d9;
+  --special-soft: rgba(109, 40, 217, 0.1);
+  --special-line: rgba(109, 40, 217, 0.34);
 }
 
 [data-theme='dark'] {
@@ -66,6 +108,25 @@
   --grid-line: rgba(255, 255, 255, 0.04);
   --shadow-soft-value: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.42);
   --shadow-lift-value: 0 1px 3px rgba(0, 0, 0, 0.6), 0 40px 80px rgba(0, 0, 0, 0.55);
+
+  /* Same tones the dark theme already shipped, now behind the shared tokens. */
+  --success: #34d399;
+  --success-solid: #059669;
+  --success-soft: rgba(16, 185, 129, 0.1);
+  --success-line: rgba(16, 185, 129, 0.3);
+  --warn: #fbbf24;
+  --warn-soft: rgba(245, 158, 11, 0.1);
+  --warn-line: rgba(245, 158, 11, 0.3);
+  --danger: #f87171;
+  --danger-solid: #dc2626;
+  --danger-soft: rgba(239, 68, 68, 0.1);
+  --danger-line: rgba(239, 68, 68, 0.3);
+  --info: #38bdf8;
+  --info-soft: rgba(14, 165, 233, 0.1);
+  --info-line: rgba(14, 165, 233, 0.3);
+  --special: #a78bfa;
+  --special-soft: rgba(139, 92, 246, 0.1);
+  --special-line: rgba(139, 92, 246, 0.3);
 }
 
 html {

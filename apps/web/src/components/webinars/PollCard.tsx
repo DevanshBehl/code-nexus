@@ -77,7 +77,7 @@ export function PollCard({
           <button
             type="button"
             onClick={onClose}
-            className="text-[12px] font-medium text-red-500 hover:underline"
+            className="text-[12px] font-medium text-danger hover:underline"
           >
             Close poll
           </button>

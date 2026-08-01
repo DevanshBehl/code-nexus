@@ -83,17 +83,17 @@ function ContestCard({ c, host }: { c: ContestListItem; host: boolean }) {
             <Users className="h-3.5 w-3.5" /> {c.participantCount}
           </span>
           {!host && c.submittedAt ? (
-            <span className="text-emerald-500">Submitted</span>
+            <span className="text-success">Submitted</span>
           ) : c.phase === 'upcoming' ? (
-            <span className="text-sky-500">
+            <span className="text-info">
               opens in <Countdown target={c.startsAt} />
             </span>
           ) : c.phase === 'open' ? (
-            <span className="text-emerald-500">
+            <span className="text-success">
               entry closes in <Countdown target={c.entryDeadline} />
             </span>
           ) : c.phase === 'running' ? (
-            <span className="text-amber-500">in progress</span>
+            <span className="text-warn">in progress</span>
           ) : (
             <span>{formatDateTime(c.startsAt)}</span>
           )}

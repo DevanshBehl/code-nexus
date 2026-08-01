@@ -153,7 +153,7 @@ function HostAction({
         type="button"
         disabled={pending}
         onClick={live ? onJoin : onGoLive}
-        className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-red-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-danger-solid px-4 py-2.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
       >
         {pending ? (
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -165,7 +165,7 @@ function HostAction({
         {live ? 'Join now' : 'Go live & join'}
       </button>
       {error ? (
-        <p className="text-[12px] text-red-500">
+        <p className="text-[12px] text-danger">
           {error instanceof ApiError ? error.message : 'Could not start the interview'}
         </p>
       ) : null}
@@ -174,7 +174,7 @@ function HostAction({
           type="button"
           disabled={pending}
           onClick={onCancel}
-          className="text-[13px] font-medium text-red-500 hover:underline disabled:opacity-50"
+          className="text-[13px] font-medium text-danger hover:underline disabled:opacity-50"
         >
           Cancel this interview
         </button>

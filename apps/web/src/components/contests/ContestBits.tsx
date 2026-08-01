@@ -66,9 +66,9 @@ export function LeaderboardTable({
                 return (
                   <td key={slug} className="px-2 py-2.5 text-center text-[12px]">
                     {pq?.solved ? (
-                      <span className="text-emerald-500">✓</span>
+                      <span className="text-success">✓</span>
                     ) : pq && pq.bestTestsPassed > 0 ? (
-                      <span className="text-amber-500">{pq.bestTestsPassed}</span>
+                      <span className="text-warn">{pq.bestTestsPassed}</span>
                     ) : (
                       <span className="text-faint">–</span>
                     )}

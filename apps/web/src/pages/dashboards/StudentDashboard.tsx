@@ -139,7 +139,7 @@ export function StudentDashboard() {
                                 </span>
                                 <span
                                   className={`mono-label shrink-0 text-[9px] ${
-                                    open ? 'text-emerald-500' : 'text-sky-500'
+                                    open ? 'text-success' : 'text-info'
                                   }`}
                                 >
                                   {open ? '● OPEN' : 'UPCOMING'}
@@ -199,7 +199,7 @@ export function StudentDashboard() {
                               </span>
                               <span
                                 className={`mono-label shrink-0 text-[9px] ${
-                                  live ? 'text-red-500' : 'text-sky-500'
+                                  live ? 'text-danger' : 'text-info'
                                 }`}
                               >
                                 {live ? '● LIVE' : 'SCHEDULED'}
@@ -237,7 +237,7 @@ export function StudentDashboard() {
                               </span>
                               <span
                                 className={`mono-label shrink-0 text-[9px] ${
-                                  live ? 'text-red-500' : 'text-sky-500'
+                                  live ? 'text-danger' : 'text-info'
                                 }`}
                               >
                                 {live ? '● LIVE' : 'SCHEDULED'}

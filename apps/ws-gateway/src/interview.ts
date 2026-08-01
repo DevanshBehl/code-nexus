@@ -5,6 +5,9 @@ import {
   interviewClientMessageSchema,
   needsAdmission,
   DEFAULT_INTERVIEW_SURFACE,
+  INTERVIEW_CLOSE_REPLACED,
+  INTERVIEW_HEARTBEAT_MS,
+  INTERVIEW_STALE_AFTER_MS,
   type InterviewQuestion,
   type InterviewServerMessage,
   type InterviewSurface,
@@ -52,6 +55,8 @@ export interface WaitingPeer {
   admit: () => void;
   /** Turn them away; their client closes itself on the frame. */
   deny: () => void;
+  /** Hang up on them (used when the same person knocks again from a newer tab). */
+  close: (code: number, reason: string) => void;
 }
 
 /**
@@ -159,6 +164,8 @@ export function handleInterviewConnection(
   const limiter = new RateLimiter();
   /** False while this socket is parked in the lobby — it may send nothing inward. */
   let inRoom = false;
+  /** Last inbound frame (the client heartbeats every `INTERVIEW_HEARTBEAT_MS`). */
+  let lastSeen = Date.now();
 
   /** Queue a timeline row (no-op when there is no sink or no start time). */
   const logEvent = (
@@ -191,6 +198,43 @@ export function handleInterviewConnection(
     }
   };
 
+  /**
+   * ONE LIVE CONNECTION PER PERSON. Retire every other socket this user still has
+   * in this room the moment they arrive on a new one.
+   *
+   * An interview is a WebRTC mesh: the roster IS the set of tiles everybody
+   * renders, so a socket that outlives its page — a reload, a second tab, a
+   * StrictMode double-mount in dev, a laptop lid closed on a dead TCP connection —
+   * does not merely linger, it puts a duplicate of that person on screen next to
+   * themselves. A room booked for two must show two people.
+   *
+   * Newest wins, because the newest socket is the one attached to a page someone
+   * is actually looking at. The retired socket is told why (`INTERVIEW_CLOSE_
+   * REPLACED`) so its client stands down instead of reconnecting into a duel.
+   */
+  const retireOlderConnectionsOf = (userId: string): void => {
+    for (const c of registry.connections(roomId)) {
+      if (c.id === peerId || c.userId !== userId) continue;
+      registry.leave(roomId, c.id);
+      // Take the ghost off everyone's screen before the socket even finishes
+      // closing — its own close handler is too late to be the only signal.
+      registry.broadcast(roomId, { t: 'peer:left', peerId: c.id });
+      c.close?.(INTERVIEW_CLOSE_REPLACED, 'replaced by a newer connection');
+    }
+    // And the same person's abandoned knocks, so an interviewer is never asked to
+    // admit someone who is already sitting in the room.
+    const waiting = lobby.get(roomId);
+    if (!waiting) return;
+    let dropped = false;
+    for (const [id, w] of waiting) {
+      if (id === peerId || w.userId !== userId) continue;
+      waiting.delete(id);
+      w.close(INTERVIEW_CLOSE_REPLACED, 'replaced by a newer connection');
+      dropped = true;
+    }
+    if (dropped) notifyDoorkeepers();
+  };
+
   /** Actually enter the room. Deferred for anyone who has to be admitted first. */
   const enterRoom = (): void => {
     if (inRoom) return;
@@ -211,7 +255,9 @@ export function handleInterviewConnection(
       send: (m) => {
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
       },
+      close: (code, reason) => ws.close(code, reason),
     });
+    retireOlderConnectionsOf(payload.userId);
 
     // Tell the newcomer who's already here; tell everyone else a peer joined.
     const others = registry.roster(roomId).filter((p) => p.peerId !== peerId);
@@ -240,6 +286,8 @@ export function handleInterviewConnection(
 
   /** Park outside the room until an interviewer decides. */
   const enterLobby = (): void => {
+    // One knock per person, for the same reason as one tile per person.
+    retireOlderConnectionsOf(payload.userId);
     let waiting = lobby.get(roomId);
     if (!waiting) {
       waiting = new Map();
@@ -251,6 +299,7 @@ export function handleInterviewConnection(
       displayName: payload.displayName,
       requestedAt: Date.now(),
       send,
+      close: (code, reason) => ws.close(code, reason),
       admit: () => {
         waiting.delete(peerId);
         send({ t: 'lobby:admitted' });
@@ -275,6 +324,7 @@ export function handleInterviewConnection(
   }
 
   ws.on('message', (data) => {
+    lastSeen = Date.now();
     const msg = parseInterviewInbound(data.toString());
     if (!msg) {
       send({ t: 'error', code: 'BAD_FRAME', message: 'Invalid message' });
@@ -387,6 +437,23 @@ export function handleInterviewConnection(
       clearRoomState(roomId, { codeSnapshots, surfaces, questions, lobby, admitted });
     }
   });
+
+  /**
+   * Sweep out a socket that has gone quiet.
+   *
+   * A TCP connection that dies without a FIN — a lid closed, a tunnel dropped —
+   * leaves a socket the server still believes in, and in a mesh room that reads
+   * to everyone else as a person frozen in place. The client heartbeats every
+   * `INTERVIEW_HEARTBEAT_MS`, so silence for three of them is the room's evidence
+   * that nobody is on the other end. The webinar rooms have always done this; the
+   * interview rooms, where each connection is a video tile, need it more.
+   */
+  const sweep = setInterval(() => {
+    if (Date.now() - lastSeen > INTERVIEW_STALE_AFTER_MS) ws.terminate();
+  }, INTERVIEW_HEARTBEAT_MS);
+  // Never let the sweep be the reason the process (or a test run) stays alive.
+  sweep.unref?.();
+  ws.on('close', () => clearInterval(sweep));
 }
 
 function cryptoRandom(): string {

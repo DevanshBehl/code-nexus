@@ -29,7 +29,7 @@ export function ProductPreview() {
           codenexus.app/room/IN-2481
         </div>
         <span className="mono-label flex items-center gap-1.5 text-[10px] text-faint">
-          <Circle className="h-2 w-2 fill-red-500 text-red-500" />
+          <Circle className="h-2 w-2 fill-danger text-danger" />
           REC 12:04
         </span>
       </div>
@@ -80,12 +80,12 @@ export function ProductPreview() {
               <div className="mt-auto border-t border-line px-3 py-2.5">
                 <div className="mb-1.5 flex items-center justify-between">
                   <span className="mono-label flex items-center gap-1.5 text-[10px] text-fg">
-                    <Check className="h-3 w-3 text-emerald-500" /> 3 / 5 tests passing
+                    <Check className="h-3 w-3 text-success" /> 3 / 5 tests passing
                   </span>
                   <span className="mono-label text-[10px] text-faint">run ⌘↵</span>
                 </div>
                 <div className="h-1 overflow-hidden rounded-full bg-line">
-                  <div className="h-full w-3/5 rounded-full bg-emerald-500" />
+                  <div className="h-full w-3/5 rounded-full bg-success" />
                 </div>
               </div>
             </div>
@@ -120,7 +120,7 @@ function VideoTile({
         </div>
       </div>
       <span className="mono-label absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded bg-bg/70 px-1.5 py-0.5 text-[9px] text-muted backdrop-blur">
-        <Mic className={`h-2.5 w-2.5 ${muted ? 'text-faint' : 'text-emerald-500'}`} />
+        <Mic className={`h-2.5 w-2.5 ${muted ? 'text-faint' : 'text-success'}`} />
         {label}
       </span>
     </div>

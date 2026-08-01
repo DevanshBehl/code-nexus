@@ -15,7 +15,7 @@ export function QueryState({ isLoading, isError, onRetry, children }: QueryState
   if (isError) {
     return (
       <div className="flex flex-col items-center gap-3 py-12 text-center">
-        <AlertCircle className="h-5 w-5 text-red-500" aria-hidden="true" />
+        <AlertCircle className="h-5 w-5 text-danger" aria-hidden="true" />
         <p className="text-sm text-muted">Something went wrong loading this data.</p>
         {onRetry ? (
           <button

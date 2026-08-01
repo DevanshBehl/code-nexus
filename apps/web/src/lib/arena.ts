@@ -12,9 +12,9 @@ export const arenaKeys = {
 };
 
 export const DIFFICULTY_STYLES: Record<Difficulty, string> = {
-  EASY: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  MEDIUM: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  HARD: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400',
+  EASY: 'border-success-line bg-success-soft text-success',
+  MEDIUM: 'border-warn-line bg-warn-soft text-warn',
+  HARD: 'border-danger-line bg-danger-soft text-danger',
 };
 
 export const VERDICT_LABELS: Record<Verdict, string> = {

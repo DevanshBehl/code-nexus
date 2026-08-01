@@ -158,7 +158,7 @@ export function ContestDetail() {
                             type="button"
                             disabled={lifecycle.isPending}
                             onClick={() => lifecycle.mutate('cancel')}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3.5 py-2 text-[13px] font-medium text-red-500 hover:bg-surface-2 disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3.5 py-2 text-[13px] font-medium text-danger hover:bg-surface-2 disabled:opacity-50"
                           >
                             <Ban className="h-4 w-4" /> Cancel
                           </button>
@@ -195,7 +195,7 @@ function StudentAction({
 }) {
   if (c.submittedAt) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-emerald-500">
+      <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-success">
         <CheckCircle2 className="h-4 w-4" /> You have submitted this contest.
       </span>
     );
@@ -213,7 +213,7 @@ function StudentAction({
               requestFullscreenNow();
               navigate(`/app/contests/${publicId}/arena`);
             }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-emerald-500"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-success-solid px-4 py-2 text-[13px] font-semibold text-white hover:opacity-90"
           >
             <Play className="h-4 w-4" /> Resume attempt
           </button>
@@ -236,7 +236,7 @@ function StudentAction({
             requestFullscreenNow();
             start.mutate();
           }}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-success-solid px-4 py-2 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
         >
           <Play className="h-4 w-4" /> Start contest
         </button>
@@ -467,7 +467,7 @@ function ManageQuestions({
               <button
                 type="button"
                 onClick={() => remove(q.slug)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-faint hover:bg-surface-2 hover:text-red-500"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-faint hover:bg-surface-2 hover:text-danger"
                 title="Remove"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -584,7 +584,7 @@ function ManageQuestions({
                     <button
                       type="button"
                       onClick={() => setTests((cur) => cur.filter((_, j) => j !== i))}
-                      className="text-faint hover:text-red-500"
+                      className="text-faint hover:text-danger"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

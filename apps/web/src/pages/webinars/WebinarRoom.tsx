@@ -91,7 +91,7 @@ function LiveRoom({ webinar, publicId }: { webinar: WebinarDetail; publicId: str
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[13px] font-semibold text-fg">Chat</h2>
           {room.status !== 'open' && live && !room.ended ? (
-            <span className="inline-flex items-center gap-1 text-[11px] text-amber-500">
+            <span className="inline-flex items-center gap-1 text-[11px] text-warn">
               <WifiOff className="h-3 w-3" />{' '}
               {room.status === 'unavailable' ? 'Room offline' : 'Connecting…'}
             </span>

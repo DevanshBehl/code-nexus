@@ -12,7 +12,7 @@ export function FieldWrap({ label, error, children, htmlFor }: FieldWrapProps) {
     <label className="block" htmlFor={htmlFor}>
       <span className="mb-1.5 block text-[13px] font-medium text-fg">{label}</span>
       {children}
-      {error ? <span className="mt-1 block text-[12px] text-red-500">{error}</span> : null}
+      {error ? <span className="mt-1 block text-[12px] text-danger">{error}</span> : null}
     </label>
   );
 }
@@ -60,7 +60,7 @@ export function FormError({ message }: { message?: string }) {
   return (
     <div
       role="alert"
-      className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[13px] text-red-500"
+      className="rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[13px] text-danger"
     >
       {message}
     </div>

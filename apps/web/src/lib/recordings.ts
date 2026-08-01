@@ -17,9 +17,9 @@ export const RECORDING_STATUS_LABEL: Record<RecordingStatus, string> = {
 };
 
 export const RECORDING_STATUS_STYLE: Record<RecordingStatus, string> = {
-  RECORDING: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400',
-  PROCESSING: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  READY: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  RECORDING: 'border-danger-line bg-danger-soft text-danger',
+  PROCESSING: 'border-warn-line bg-warn-soft text-warn',
+  READY: 'border-success-line bg-success-soft text-success',
   FAILED: 'border-line bg-surface-2 text-muted',
   DELETED: 'border-line bg-surface-2 text-faint',
 };

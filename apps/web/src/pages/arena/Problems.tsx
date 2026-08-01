@@ -48,8 +48,8 @@ export function Problems() {
   });
 
   const statusIcon = (s: QuestionListItem['status']) => {
-    if (s === 'solved') return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-    if (s === 'attempted') return <CircleDot className="h-4 w-4 text-amber-500" />;
+    if (s === 'solved') return <CheckCircle2 className="h-4 w-4 text-success" />;
+    if (s === 'attempted') return <CircleDot className="h-4 w-4 text-warn" />;
     return <Circle className="h-4 w-4 text-faint" />;
   };
 

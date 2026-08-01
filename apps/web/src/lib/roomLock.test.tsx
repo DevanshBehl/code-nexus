@@ -56,12 +56,17 @@ describe('useExitGuard', () => {
 });
 
 /** jsdom ships no fullscreen API, so stand one up that we can drive. */
-function stubFullscreen() {
+function stubFullscreen({ refuse = false }: { refuse?: boolean } = {}) {
   let element: Element | null = null;
   const fire = (): void => {
     document.dispatchEvent(new Event('fullscreenchange'));
   };
   const requestFullscreen = vi.fn(() => {
+    // A browser with no user activation to spend rejects and changes nothing.
+    if (refuse) return Promise.reject(new Error('denied'));
+    // Already fullscreen: resolves, but there is no change, so NO event. This is
+    // the browser behaviour that made the gate's button look broken.
+    if (element) return Promise.resolve();
     element = document.documentElement;
     fire();
     return Promise.resolve();
@@ -83,19 +88,30 @@ function stubFullscreen() {
     get: () => element,
     configurable: true,
   });
-  return { requestFullscreen, exitFullscreen, escape: () => act(() => void exitFullscreen()) };
+  return {
+    requestFullscreen,
+    exitFullscreen,
+    escape: () => act(() => void exitFullscreen()),
+    /** Fullscreen taken before the room mounted — e.g. by the click that opened it. */
+    grantSilently: () => {
+      element = document.documentElement;
+    },
+  };
 }
 
 /** `renderHook` re-renders on its own; this keeps the assertions on one value. */
 function FullscreenProbe({
   active,
   onState,
+  onLock,
 }: {
   active: boolean;
   onState: (held: boolean) => void;
+  onLock?: (lock: ReturnType<typeof useFullscreenLock>) => void;
 }) {
-  const { held } = useFullscreenLock(active);
-  onState(held);
+  const lock = useFullscreenLock(active);
+  onState(lock.held);
+  onLock?.(lock);
   return null;
 }
 
@@ -146,5 +162,65 @@ describe('useFullscreenLock', () => {
     render(<FullscreenProbe active onState={(h) => seen.push(h)} />);
     await act(async () => {});
     expect(seen.at(-1)).toBe(true);
+  });
+
+  it('notices fullscreen that was taken before the lock switched on', async () => {
+    // The room asks from the click that opens it, which lands well before the
+    // lock goes live (a candidate is not locked in until they are admitted). A
+    // lock that only starts listening at that point never hears the change and
+    // gates a room that is already fullscreen.
+    const fs = stubFullscreen();
+    const seen: boolean[] = [];
+    const { rerender } = render(<FullscreenProbe active={false} onState={(h) => seen.push(h)} />);
+    fs.grantSilently();
+
+    rerender(<FullscreenProbe active onState={(h) => seen.push(h)} />);
+    await act(async () => {});
+
+    expect(seen.at(-1)).toBe(true);
+  });
+
+  it('answers a request made while the viewport is already ours', async () => {
+    // `requestFullscreen` resolves without firing `fullscreenchange` when there
+    // is nothing to change — so the gate must not sit there waiting for one.
+    const fs = stubFullscreen();
+    const seen: boolean[] = [];
+    let lock!: ReturnType<typeof useFullscreenLock>;
+    render(
+      <FullscreenProbe
+        active={false}
+        onState={(h) => seen.push(h)}
+        onLock={(l) => {
+          lock = l;
+        }}
+      />,
+    );
+    fs.grantSilently();
+    fs.requestFullscreen.mockClear();
+
+    await act(async () => lock.request());
+
+    expect(seen.at(-1)).toBe(true);
+    expect(fs.requestFullscreen).not.toHaveBeenCalled();
+  });
+
+  it('says so when the browser refuses, instead of looking like a dead button', async () => {
+    const fs = stubFullscreen({ refuse: true });
+    const seen: boolean[] = [];
+    let lock!: ReturnType<typeof useFullscreenLock>;
+    render(
+      <FullscreenProbe
+        active
+        onState={(h) => seen.push(h)}
+        onLock={(l) => {
+          lock = l;
+        }}
+      />,
+    );
+    await act(async () => {});
+
+    expect(fs.requestFullscreen).toHaveBeenCalled();
+    expect(seen.at(-1)).toBe(false);
+    expect(lock.refused).toBe(true);
   });
 });

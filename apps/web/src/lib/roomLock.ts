@@ -41,6 +41,10 @@ function isFullscreenNow(): boolean {
 
 function fullscreenSupported(): boolean {
   if (typeof document === 'undefined') return false;
+  // An embedded page (an iframe without `allow="fullscreen"`) has the API but is
+  // refused every time. Treating that as "no fullscreen to give" is the honest
+  // reading — otherwise the room shows a gate whose button can never work.
+  if (document.fullscreenEnabled === false) return false;
   const el = document.documentElement as FullscreenElement;
   return (
     typeof el.requestFullscreen === 'function' || typeof el.webkitRequestFullscreen === 'function'
@@ -140,6 +144,8 @@ export interface FullscreenLock {
   held: boolean;
   /** False on browsers without the fullscreen API (iOS Safari); callers must not gate on it there. */
   supported: boolean;
+  /** A request was made and the browser did not grant it — the gate should say so. */
+  refused: boolean;
   /** Re-request the viewport. Must be called from a user gesture to be reliable. */
   request: () => void;
 }
@@ -153,33 +159,74 @@ export interface FullscreenLock {
  * window — but it is allowed to fail, and pressing Escape leaves fullscreen at
  * any time. `held` is the honest answer either way, and the room shows a gate
  * over itself until a click wins the viewport back.
+ *
+ * Two things this hook must never do, because both read to the person in the room
+ * as a dead button:
+ *   - Miss a fullscreen change. The room usually takes the viewport from the click
+ *     that opened it, which lands BEFORE `active` turns on (a candidate is not
+ *     locked until the interviewer admits them). So the listeners go up as soon as
+ *     the API exists, and the state is re-read the moment they do — a transition
+ *     nobody was listening for used to leave `held` false forever.
+ *   - Ask again when the viewport is already ours. `requestFullscreen` resolves
+ *     without firing `fullscreenchange` in that case, so the gate would sit there
+ *     swallowing clicks. Already-ours is answered locally instead.
  */
 export function useFullscreenLock(active: boolean): FullscreenLock {
   const [supported] = useState(fullscreenSupported);
   const [inFullscreen, setInFullscreen] = useState(isFullscreenNow);
+  const [refused, setRefused] = useState(false);
+  /** One request at a time: a second one lands mid-transition and is rejected. */
+  const pending = useRef(false);
+
+  // Track the viewport whenever the API exists, not only while locked — see above.
+  useEffect(() => {
+    if (!supported) return;
+    const sync = (): void => {
+      const now = isFullscreenNow();
+      setInFullscreen(now);
+      if (now) setRefused(false);
+    };
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('webkitfullscreenchange', sync);
+    // Catch a transition that completed between this render and this effect.
+    sync();
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      document.removeEventListener('webkitfullscreenchange', sync);
+    };
+  }, [supported]);
 
   const request = useCallback((): void => {
     if (!supported) return;
-    // Rejected when there is no user activation — the gate stays up and asks.
-    void enterFullscreen().catch(() => undefined);
+    if (isFullscreenNow()) {
+      // Already ours — the state was simply behind. Say so and stop.
+      setInFullscreen(true);
+      setRefused(false);
+      return;
+    }
+    if (pending.current) return;
+    pending.current = true;
+    void enterFullscreen()
+      .catch(() => undefined)
+      .finally(() => {
+        pending.current = false;
+        // Trust the document, not the promise: some browsers resolve a request
+        // they did not honour, and `fullscreenchange` may already have run.
+        const now = isFullscreenNow();
+        setInFullscreen(now);
+        setRefused(!now);
+      });
   }, [supported]);
 
   useEffect(() => {
     if (!active || !supported) return;
-
-    const sync = (): void => setInFullscreen(isFullscreenNow());
-    document.addEventListener('fullscreenchange', sync);
-    document.addEventListener('webkitfullscreenchange', sync);
     request();
-
     return () => {
-      document.removeEventListener('fullscreenchange', sync);
-      document.removeEventListener('webkitfullscreenchange', sync);
       // Hand the viewport back on the way out — nobody expects the page they
       // land on after an interview to still be fullscreen.
       void leaveFullscreen().catch(() => undefined);
     };
   }, [active, supported, request]);
 
-  return { held: !supported || inFullscreen, supported, request };
+  return { held: !supported || inFullscreen, supported, refused, request };
 }

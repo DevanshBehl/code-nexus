@@ -22,9 +22,9 @@ export const PHASE_LABEL: Record<ContestPhase, string> = {
 export const PHASE_STYLE: Record<ContestPhase, string> = {
   draft: 'border-line bg-surface-2 text-muted',
   cancelled: 'border-line bg-surface-2 text-faint',
-  upcoming: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  open: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  running: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  upcoming: 'border-info-line bg-info-soft text-info',
+  open: 'border-success-line bg-success-soft text-success',
+  running: 'border-warn-line bg-warn-soft text-warn',
   ended: 'border-line bg-surface-2 text-muted',
 };
 

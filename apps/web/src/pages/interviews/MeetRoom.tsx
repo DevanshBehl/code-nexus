@@ -115,6 +115,8 @@ export function MeetRoom({
   const [presence, setPresence] = useState(1);
   const [status, setStatus] = useState<RtcStatus>('connecting');
   const [ended, setEnded] = useState(false);
+  /** This person opened the room in a newer tab; this one has been retired. */
+  const [displaced, setDisplaced] = useState(false);
   // Set only on the sanctioned way out (declining to be recorded) so the exit
   // guard stands down for the navigation that follows.
   const [exiting, setExiting] = useState(false);
@@ -199,6 +201,14 @@ export function MeetRoom({
         });
         setPeers((cur) => cur.filter((p) => p.peerId !== peerId));
       },
+      // The socket dropped: every peer id we knew died with it. Clear the roster
+      // and the streams so the reconnect rebuilds the room instead of stacking a
+      // second set of tiles on top of frozen ones.
+      onReset: () => {
+        setPeers([]);
+        setRemotes(new Map());
+      },
+      onDisplaced: () => setDisplaced(true),
       onCode: setCode,
       onWhiteboard: (stroke) => {
         wbSeq.current += 1;
@@ -331,8 +341,10 @@ export function MeetRoom({
    * Applies to every participant — candidate, recruiter and company side alike.
    */
   // Only once you are actually IN. Someone still knocking — or turned away — has
-  // not started an interview, and trapping them at the door would be absurd.
-  const locked = admission === 'in' && !ended && !exiting;
+  // not started an interview, and trapping them at the door would be absurd. A
+  // retired tab is not in the interview either: the person is in the newer one,
+  // and holding this window hostage would trap them in a room they already left.
+  const locked = admission === 'in' && !ended && !exiting && !displaced;
   useExitGuard(locked, () =>
     setNotice('You cannot leave a live interview — the interviewer ends it for everyone.'),
   );
@@ -462,13 +474,23 @@ export function MeetRoom({
 
   // ---- Derived --------------------------------------------------------------
 
-  const peerName = useCallback(
-    (peerId: string): string =>
-      peers.find((p) => p.peerId === peerId)?.displayName ?? 'Participant',
-    [peers],
-  );
   const candidateName = iv.candidate.displayName;
-  const remoteTiles = useMemo(() => [...remotes.entries()], [remotes]);
+  /**
+   * One tile per person in the room, and the ROSTER decides who that is — not the
+   * set of streams we happen to be holding. A stream outlives its peer (a dropped
+   * socket, a renegotiation, a tab that was retired), and rendering by stream is
+   * how an interview booked for two ends up showing five frozen copies of the
+   * same two faces. A peer with no stream yet gets a named placeholder instead.
+   */
+  const remoteTiles = useMemo(
+    () =>
+      peers.map((p) => ({
+        peerId: p.peerId,
+        name: p.displayName,
+        stream: remotes.get(p.peerId) ?? null,
+      })),
+    [peers, remotes],
+  );
   const onStage = surface !== 'call';
 
   const tiles = (
@@ -480,8 +502,8 @@ export function MeetRoom({
         micOff={!micOn}
         camOff={!camOn}
       />
-      {remoteTiles.map(([peerId, stream]) => (
-        <VideoTile key={peerId} stream={stream} label={peerName(peerId)} />
+      {remoteTiles.map((t) => (
+        <VideoTile key={t.peerId} stream={t.stream} label={t.name} />
       ))}
     </>
   );
@@ -708,9 +730,35 @@ export function MeetRoom({
       <FullscreenGate
         open={locked && !fullscreen.held}
         onEnter={fullscreen.request}
+        refused={fullscreen.refused}
         title="This interview runs fullscreen"
         detail="The room needs the whole screen while the interview is live. It stays that way until the interviewer ends the session."
       />
+
+      {/* Retired in favour of a newer tab. Shown above the admission gate because
+          it is the more specific answer to "why is nothing happening here". */}
+      {displaced && !ended ? (
+        <div
+          role="status"
+          className="absolute inset-0 z-40 flex items-center justify-center bg-neutral-950 p-6 text-center"
+        >
+          <div className="max-w-sm">
+            <DoorClosed className="mx-auto mb-4 h-8 w-8 text-white/60" aria-hidden="true" />
+            <p className="text-[15px] font-medium text-white">You joined from another window</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-white/60">
+              This interview is open somewhere newer, so this window has left the room — one
+              connection per person, or everybody sees two of you. Carry on in the other window.
+            </p>
+            <button
+              type="button"
+              onClick={onLeave}
+              className="mt-5 rounded-lg border border-white/20 px-4 py-2 text-[13px] font-medium text-white/80 hover:bg-white/10"
+            >
+              Close this one
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Until the door opens, the room behind this is empty by construction: the
           gateway sends a waiting socket no roster, no signaling and no chat. */}

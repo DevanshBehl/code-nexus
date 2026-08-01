@@ -204,14 +204,14 @@ function Player({
                   del.mutate();
                 }
               }}
-              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-red-500 hover:underline disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-danger hover:underline disabled:opacity-50"
             >
               <Trash2 className="h-3.5 w-3.5" /> Delete
             </button>
           ) : null
         }
       >
-        {error ? <p className="mb-3 text-[12px] text-red-500">{error}</p> : null}
+        {error ? <p className="mb-3 text-[12px] text-danger">{error}</p> : null}
         <p className="mb-3 text-[13px] text-muted">
           {detail.candidateName} · {formatDateTime(detail.startedAt)} ·{' '}
           {formatDuration(detail.durationMs)}

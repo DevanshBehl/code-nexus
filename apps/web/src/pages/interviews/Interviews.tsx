@@ -84,7 +84,7 @@ function InterviewRow({ i }: { i: InterviewListItem }) {
           {open ? (
             <span
               className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold ${
-                i.status === 'LIVE' ? 'bg-red-600 text-white' : 'border border-line-strong text-fg'
+                i.status === 'LIVE' ? 'bg-danger-solid text-white' : 'border border-line-strong text-fg'
               }`}
             >
               <DoorOpen className="h-3.5 w-3.5" aria-hidden="true" />

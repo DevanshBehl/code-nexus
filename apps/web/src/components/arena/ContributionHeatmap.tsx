@@ -8,11 +8,13 @@ interface ContributionHeatmapProps {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** Sequential ramp. Steps are spaced so each bucket is distinguishable from the
+ *  empty cell and from its neighbours in both themes. */
 function bucket(count: number): string {
-  if (count <= 0) return 'bg-line/40';
-  if (count <= 2) return 'bg-emerald-500/30';
-  if (count <= 5) return 'bg-emerald-500/60';
-  return 'bg-emerald-500';
+  if (count <= 0) return 'bg-line/70';
+  if (count <= 2) return 'bg-success/30';
+  if (count <= 5) return 'bg-success/60';
+  return 'bg-success';
 }
 
 function ymd(d: Date): string {
@@ -95,10 +97,10 @@ export function ContributionHeatmap({ year, days }: ContributionHeatmapProps) {
           </div>
           <div className="mt-2 flex items-center justify-end gap-1 text-[9px] text-faint">
             <span>Less</span>
-            <span className="h-[11px] w-[11px] rounded-[2px] bg-line/40" />
-            <span className="h-[11px] w-[11px] rounded-[2px] bg-emerald-500/30" />
-            <span className="h-[11px] w-[11px] rounded-[2px] bg-emerald-500/60" />
-            <span className="h-[11px] w-[11px] rounded-[2px] bg-emerald-500" />
+            <span className="h-[11px] w-[11px] rounded-[2px] bg-line/70" />
+            <span className="h-[11px] w-[11px] rounded-[2px] bg-success/30" />
+            <span className="h-[11px] w-[11px] rounded-[2px] bg-success/60" />
+            <span className="h-[11px] w-[11px] rounded-[2px] bg-success" />
             <span>More</span>
           </div>
         </div>

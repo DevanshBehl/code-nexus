@@ -152,7 +152,7 @@ function Console({ webinar, publicId }: { webinar: WebinarDetail; publicId: stri
                   type="button"
                   disabled={lifecycle.isPending}
                   onClick={() => lifecycle.mutate('go-live')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-danger-solid px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
                 >
                   <Radio className="h-4 w-4" /> Go live
                 </button>
@@ -164,7 +164,7 @@ function Console({ webinar, publicId }: { webinar: WebinarDetail; publicId: stri
                   onClick={() => {
                     if (confirm('End this webinar for everyone?')) lifecycle.mutate('end');
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-danger-solid px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
                 >
                   <Square className="h-4 w-4" /> End webinar
                 </button>
@@ -174,7 +174,7 @@ function Console({ webinar, publicId }: { webinar: WebinarDetail; publicId: stri
                   type="button"
                   disabled={lifecycle.isPending}
                   onClick={() => lifecycle.mutate('cancel')}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3.5 py-2 text-[13px] font-medium text-red-500 hover:bg-surface-2 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3.5 py-2 text-[13px] font-medium text-danger hover:bg-surface-2 disabled:opacity-50"
                 >
                   <Ban className="h-4 w-4" /> Cancel
                 </button>

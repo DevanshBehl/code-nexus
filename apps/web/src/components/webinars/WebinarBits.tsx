@@ -52,7 +52,7 @@ export function AttendanceTable({ rows }: { rows: AttendanceRow[] }) {
               </td>
               <td className="px-3 py-2.5 text-[12px]">
                 {r.present ? (
-                  <span className="text-emerald-500">● Present</span>
+                  <span className="text-success">● Present</span>
                 ) : (
                   <span className="text-faint">Left</span>
                 )}

@@ -226,7 +226,7 @@ export function CompanyDriveDetail() {
 
             <Panel title="Applicants" action={<Filters value={filters} onChange={setFilters} />}>
               {actionError ? (
-                <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[13px] text-red-500">
+                <p className="mb-3 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[13px] text-danger">
                   {actionError}
                 </p>
               ) : null}

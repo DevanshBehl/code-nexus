@@ -1,5 +1,6 @@
 import {
   isOfferer,
+  INTERVIEW_CLOSE_REPLACED,
   type InterviewChatMessage,
   type InterviewPeer,
   type InterviewQuestion,
@@ -32,6 +33,14 @@ export interface InterviewSessionCallbacks {
   /** The people currently knocking (interviewers only). */
   onLobby?: (waiting: LobbyWaiter[]) => void;
   onReady?: (myPeerId: string, peers: InterviewPeer[]) => void;
+  /**
+   * The mesh was torn down (the socket dropped). Every peer id from the previous
+   * session is dead — drop the tiles rather than leave frozen video on screen
+   * until the reconnect happens to hand back the same ids, which it will not.
+   */
+  onReset?: () => void;
+  /** This person opened the room somewhere newer; this connection is retired. */
+  onDisplaced?: () => void;
   onRemoteStream?: (peerId: string, stream: MediaStream) => void;
   onPeerJoined?: (peer: InterviewPeer) => void;
   onPeerLeft?: (peerId: string) => void;
@@ -73,6 +82,10 @@ export class InterviewSession {
   }
 
   private async open(): Promise<void> {
+    // Never run two sockets at once. One person is one connection in the room —
+    // the gateway now enforces that by retiring the older one, and a client that
+    // races itself would spend the interview evicting its own tile.
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
     this.status('connecting');
     let tok: RtTokenResponse;
     try {
@@ -87,6 +100,11 @@ export class InterviewSession {
       this.scheduleReconnect();
       return;
     }
+    // The token round-trip is two awaits long, and `close()` can land inside it —
+    // React's StrictMode does exactly that on every mount in development. Without
+    // this check the abandoned session opens its socket anyway and sits in the
+    // room forever as a second copy of this person.
+    if (this.closedByUser) return;
 
     let ws: WebSocket;
     try {
@@ -99,6 +117,11 @@ export class InterviewSession {
     this.ws = ws;
 
     ws.onopen = () => {
+      // A socket that opened after we were told to go away is a leak, not a room.
+      if (this.closedByUser) {
+        ws.close();
+        return;
+      }
       this.attempts = 0;
       this.status('open');
       this.heartbeat = setInterval(() => this.sendRaw({ t: 'presence:heartbeat' }), 15_000);
@@ -112,14 +135,36 @@ export class InterviewSession {
       }
       void this.handle(msg);
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      // Ignore a late close from a socket we have already moved on from.
+      if (this.ws !== ws) return;
+      this.ws = null;
       this.clearHeartbeat();
+      // The peer connections belonged to that session's peer ids and mean nothing
+      // now; a reconnect renegotiates from scratch.
+      this.dropPeers();
       this.status('closed');
+      if (ev.code === INTERVIEW_CLOSE_REPLACED) {
+        // The same person joined from somewhere newer. Reconnecting here would
+        // just evict them back — one of the two tabs has to lose, and it is this
+        // one, which is by definition the one nobody is looking at.
+        this.closedByUser = true;
+        this.cb.onDisplaced?.();
+        return;
+      }
       if (!this.closedByUser) this.scheduleReconnect();
     };
     ws.onerror = () => {
       /* onclose follows */
     };
+  }
+
+  /** Tear down every peer connection and tell the UI its tiles are stale. */
+  private dropPeers(): void {
+    if (this.peers.size === 0) return;
+    for (const pc of this.peers.values()) pc.close();
+    this.peers.clear();
+    this.cb.onReset?.();
   }
 
   private scheduleReconnect(): void {
@@ -294,7 +339,8 @@ export class InterviewSession {
     this.clearHeartbeat();
     for (const pc of this.peers.values()) pc.close();
     this.peers.clear();
-    this.ws?.close();
+    const ws = this.ws;
     this.ws = null;
+    ws?.close();
   }
 }
