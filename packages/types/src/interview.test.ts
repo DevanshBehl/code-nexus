@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canAdmitToRoom,
   canDrawOnWhiteboard,
   canEditSharedCode,
   canSwitchSurface,
+  needsAdmission,
   feedbackCreateSchema,
   interviewClientMessageSchema,
   interviewCreateSchema,
@@ -165,6 +167,35 @@ describe('live question pinning', () => {
     expect(parsed.pageSize).toBe(20);
     expect(interviewQuestionBankQuerySchema.safeParse({ pageSize: 500 }).success).toBe(false);
     expect(interviewQuestionBankQuerySchema.safeParse({ difficulty: 'IMPOSSIBLE' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('lobby admission rules', () => {
+  it('makes the candidate wait and lets the interviewers in', () => {
+    expect(needsAdmission('CANDIDATE')).toBe(true);
+    expect(needsAdmission('INTERVIEWER')).toBe(false);
+    expect(needsAdmission('HOST')).toBe(false);
+  });
+
+  it('never lets one role both wait at the door and open it', () => {
+    // The two rules are complements by construction; assert it so a future edit
+    // cannot quietly produce a candidate who admits themselves.
+    for (const role of ['CANDIDATE', 'INTERVIEWER', 'HOST', 'VIEWER'] as const) {
+      expect(canAdmitToRoom(role)).toBe(!needsAdmission(role));
+    }
+  });
+
+  it('accepts admit/deny frames and rejects a missing target', () => {
+    expect(
+      interviewClientMessageSchema.safeParse({ t: 'lobby:admit', peerId: 'p_abc' }).success,
+    ).toBe(true);
+    expect(
+      interviewClientMessageSchema.safeParse({ t: 'lobby:deny', peerId: 'p_abc' }).success,
+    ).toBe(true);
+    expect(interviewClientMessageSchema.safeParse({ t: 'lobby:admit' }).success).toBe(false);
+    expect(interviewClientMessageSchema.safeParse({ t: 'lobby:admit', peerId: '' }).success).toBe(
       false,
     );
   });

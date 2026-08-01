@@ -22,8 +22,11 @@ import {
 import { EventBuffer } from './events.js';
 import {
   clearRoomState,
+  closeLobby,
   handleInterviewConnection,
+  type AdmittedUsers,
   type CodeSnapshots,
+  type LobbyWaiters,
   type RoomQuestions,
   type RoomSurfaces,
 } from './interview.js';
@@ -69,7 +72,11 @@ async function main(): Promise<void> {
   const codeSnapshots: CodeSnapshots = new Map();
   const surfaces: RoomSurfaces = new Map();
   const questions: RoomQuestions = new Map();
-  const interviewState = { codeSnapshots, surfaces, questions };
+  // The lobby: candidates parked outside each room, plus who has already been
+  // let in (so a reconnect does not send them back to the door).
+  const lobby: LobbyWaiters = new Map();
+  const admitted: AdmittedUsers = new Map();
+  const interviewState = { codeSnapshots, surfaces, questions, lobby, admitted };
   // Phase 10 — the review timeline. Batched so a burst of joins/switches is one
   // insert, and drained on shutdown so the last marks are never lost.
   const events = new EventBuffer(persistEvents);
@@ -92,6 +99,8 @@ async function main(): Promise<void> {
     // peer who joins (or reconnects) after the interviewer set it still sees it.
     if (event.t === 'question:set') questions.set(roomId, event.question ?? null);
     if (event.t === 'webinar:ended' || event.t === 'interview:ended') {
+      // Waiters sit outside the registry, so the broadcast above missed them.
+      if (event.t === 'interview:ended') closeLobby(lobby, roomId);
       registry.drain(roomId);
       clearRoomState(roomId, interviewState);
       // Sockets close themselves on the frame; drain frees the room map.

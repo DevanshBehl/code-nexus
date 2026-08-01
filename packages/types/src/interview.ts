@@ -224,6 +224,9 @@ export interface RtcConfigResponse {
 
 /** Inbound (client → gateway). */
 export const interviewClientMessageSchema = z.discriminatedUnion('t', [
+  // Admission control. Only an interviewer may send these; the gateway checks.
+  z.object({ t: z.literal('lobby:admit'), peerId: z.string().min(1).max(64) }),
+  z.object({ t: z.literal('lobby:deny'), peerId: z.string().min(1).max(64) }),
   z.object({ t: z.literal('rtc:offer'), to: z.string(), sdp: z.string() }),
   z.object({ t: z.literal('rtc:answer'), to: z.string(), sdp: z.string() }),
   z.object({ t: z.literal('rtc:ice'), to: z.string(), candidate: z.unknown() }),
@@ -249,8 +252,22 @@ export interface InterviewChatMessage {
   sentAt: string; // ISO
 }
 
+/** Somebody knocking at the door, as shown to the interviewers who can open it. */
+export interface LobbyWaiter {
+  peerId: string;
+  displayName: string;
+  requestedAt: string; // ISO
+}
+
 /** Outbound (gateway → client). */
 export type InterviewServerMessage =
+  // ---- Lobby. A candidate's socket is connected but OUTSIDE the room: they
+  // receive no roster, no signaling, no chat, and nobody in the room receives
+  // anything of theirs until an interviewer admits them.
+  | { t: 'lobby:waiting' }
+  | { t: 'lobby:updated'; waiting: LobbyWaiter[] }
+  | { t: 'lobby:admitted' }
+  | { t: 'lobby:denied' }
   | { t: 'ready'; peerId: string; role: InterviewPeer['role']; peers: InterviewPeer[] }
   | { t: 'peer:joined'; peer: InterviewPeer }
   | { t: 'peer:left'; peerId: string }
@@ -309,6 +326,30 @@ export function canEditSharedCode(role: RtRole): boolean {
  */
 export function canDrawOnWhiteboard(_role: RtRole): boolean {
   return true;
+}
+
+/**
+ * Who has to wait at the door.
+ *
+ * A candidate never lands straight in the room: they connect, park in the lobby,
+ * and an interviewer lets them in. This is not decoration — an interview room can
+ * be open early, hold a panel's private discussion between candidates, or simply
+ * not be ready, and none of that should be audible to the person waiting.
+ *
+ * Interviewers admit themselves. The rule is enforced at the gateway (a waiting
+ * socket is refused every in-room frame); the web client only mirrors it.
+ */
+export function needsAdmission(role: RtRole): boolean {
+  return role === 'CANDIDATE';
+}
+
+/**
+ * Who may open the door. Deliberately the complement of `needsAdmission` rather
+ * than a second independent list — "waits to be let in" and "can let others in"
+ * must never both be true for one role.
+ */
+export function canAdmitToRoom(role: RtRole): boolean {
+  return !needsAdmission(role);
 }
 
 /**

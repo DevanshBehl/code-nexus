@@ -5,6 +5,7 @@ import {
   type InterviewQuestion,
   type InterviewServerMessage,
   type InterviewSurface,
+  type LobbyWaiter,
   type RtcConfigResponse,
   type RtTokenResponse,
 } from '@code-nexus/types';
@@ -22,6 +23,14 @@ export type RtcStatus = 'connecting' | 'open' | 'closed' | 'unavailable';
 
 export interface InterviewSessionCallbacks {
   onStatus?: (s: RtcStatus) => void;
+  /** Parked in the lobby — connected, but outside the room until someone opens it. */
+  onWaiting?: () => void;
+  /** An interviewer let us in. `onReady` follows immediately. */
+  onAdmitted?: () => void;
+  /** An interviewer turned us away. */
+  onDenied?: () => void;
+  /** The people currently knocking (interviewers only). */
+  onLobby?: (waiting: LobbyWaiter[]) => void;
   onReady?: (myPeerId: string, peers: InterviewPeer[]) => void;
   onRemoteStream?: (peerId: string, stream: MediaStream) => void;
   onPeerJoined?: (peer: InterviewPeer) => void;
@@ -134,6 +143,21 @@ export class InterviewSession {
 
   private async handle(msg: InterviewServerMessage): Promise<void> {
     switch (msg.t) {
+      case 'lobby:waiting':
+        this.cb.onWaiting?.();
+        break;
+      case 'lobby:admitted':
+        this.cb.onAdmitted?.();
+        break;
+      case 'lobby:denied':
+        // Being turned away is final for this attempt — stop reconnecting, or the
+        // socket would knock again on its own a second later.
+        this.cb.onDenied?.();
+        this.close();
+        break;
+      case 'lobby:updated':
+        this.cb.onLobby?.(msg.waiting);
+        break;
       case 'ready': {
         this.myPeerId = msg.peerId;
         this.cb.onReady?.(msg.peerId, msg.peers);
@@ -246,6 +270,15 @@ export class InterviewSession {
    */
   sendSurface(surface: InterviewSurface): void {
     this.sendRaw({ t: 'surface:set', surface });
+  }
+
+  /** Open the door for someone waiting (interviewer only; the gateway re-checks). */
+  admit(peerId: string): void {
+    this.sendRaw({ t: 'lobby:admit', peerId });
+  }
+  /** Turn someone away. */
+  deny(peerId: string): void {
+    this.sendRaw({ t: 'lobby:deny', peerId });
   }
 
   /** Replace the outgoing video track on every peer (used for screen-share toggle). */

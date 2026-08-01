@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CircleDot,
   Code2,
+  DoorClosed,
+  DoorOpen,
   FileText,
+  Loader2,
+  Lock,
   MessageSquare,
   Mic,
   MicOff,
-  PhoneOff,
   Presentation,
   ScreenShare,
   ScreenShareOff,
@@ -26,12 +28,15 @@ import {
   type InterviewPeer,
   type InterviewQuestion,
   type InterviewSurface,
+  type LobbyWaiter,
   type ProgrammingLanguage,
   type SubmissionDto,
 } from '@code-nexus/types';
 import { api, ApiError } from '../../lib/api.ts';
 import { interviewKeys } from '../../lib/interviews.ts';
 import { InterviewSession, type RtcStatus } from '../../lib/rtc.ts';
+import { useExitGuard, useFullscreenLock } from '../../lib/roomLock.ts';
+import { FullscreenGate } from '../../components/rooms/FullscreenGate.tsx';
 import { ChatPanel } from '../../components/webinars/ChatPanel.tsx';
 import { VideoTile } from '../../components/interviews/VideoTile.tsx';
 import { CodePad } from '../../components/interviews/CodePad.tsx';
@@ -48,7 +53,14 @@ import { InterviewRecorder, isRecordingSupported } from '../../lib/recording.ts'
  * The live interview room — a full-viewport, Meet-style call that deliberately
  * replaces the app shell: while an interview is running there is no sidebar and
  * no navigation out, so neither side can wander into the rest of the platform
- * mid-question. Leaving is an explicit, confirmed action.
+ * mid-question.
+ *
+ * The room is LOCKED for everyone in it, whatever their role. It takes the
+ * browser fullscreen on entry and covers itself if that is ever lost, Back is
+ * trapped, and there is no "leave" button: the interview is over when the
+ * interviewer ENDS it, and only then does a way out appear. The one exception is
+ * the recording consent notice — a candidate who does not agree to being
+ * recorded must be able to walk away, and that stays true here.
  *
  * The room opens as a PLAIN CALL. The whiteboard and the IDE are opt-in from the
  * dock, and opening either one is a SHARED move: the request goes to the gateway,
@@ -76,28 +88,48 @@ interface ChatRow {
 export function MeetRoom({
   iv,
   publicId,
+  stream,
+  initialMic,
+  initialCam,
   onEnded,
+  onLeave,
 }: {
   iv: InterviewDetail;
   publicId: string;
+  /** The stream the lobby already acquired — never re-prompt on the way in. */
+  stream: MediaStream | null;
+  initialMic: boolean;
+  initialCam: boolean;
   onEnded: () => void;
+  /** Back to the lobby (turned away, or the candidate declined recording). */
+  onLeave: () => void;
 }) {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const sessionRef = useRef<InterviewSession | null>(null);
   const codeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---- Media + connection ---------------------------------------------------
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const localStream = stream;
   const [remotes, setRemotes] = useState<Map<string, MediaStream>>(new Map());
   const [peers, setPeers] = useState<InterviewPeer[]>([]);
   const [presence, setPresence] = useState(1);
   const [status, setStatus] = useState<RtcStatus>('connecting');
   const [ended, setEnded] = useState(false);
-  const [micOn, setMicOn] = useState(true);
-  const [camOn, setCamOn] = useState(true);
+  // Set only on the sanctioned way out (declining to be recorded) so the exit
+  // guard stands down for the navigation that follows.
+  const [exiting, setExiting] = useState(false);
+  const [micOn, setMicOn] = useState(initialMic);
+  const [camOn, setCamOn] = useState(initialCam);
   const [sharing, setSharing] = useState(false);
-  const [mediaDenied, setMediaDenied] = useState(false);
+  const mediaDenied = !stream || stream.getTracks().length === 0;
+
+  // ---- Admission (the lobby) ------------------------------------------------
+  /**
+   * `knocking` until the gateway answers. An interviewer is admitted on connect
+   * and never sees this; a candidate waits here until somebody opens the door.
+   */
+  const [admission, setAdmission] = useState<'knocking' | 'waiting' | 'in' | 'denied'>('knocking');
+  const [lobbyQueue, setLobbyQueue] = useState<LobbyWaiter[]>([]);
 
   // ---- Shared room state (driven by the gateway, never set optimistically) ---
   const [surface, setSurface] = useState<InterviewSurface>('call');
@@ -141,72 +173,57 @@ export function MeetRoom({
   }, [peers, myPeerId, isCandidate]);
   const iAmRecorder = !!myPeerId && recorderPeerId === myPeerId;
 
-  // Acquire local media, then connect the WebRTC mesh + room socket.
+  // Connect the WebRTC mesh + room socket. The media is already in hand from the
+  // lobby, so this is the one place the room touches the network on arrival.
   useEffect(() => {
-    let session: InterviewSession | null = null;
-    let stopped = false;
-    void (async () => {
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      } catch {
-        // Camera/mic denied — join anyway, view-only, with a clear indicator.
-        stream = new MediaStream();
-        if (!stopped) {
-          setMediaDenied(true);
-          setMicOn(false);
-          setCamOn(false);
-        }
-      }
-      if (stopped) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      setLocalStream(stream);
-      session = new InterviewSession(publicId, stream, {
-        onStatus: setStatus,
-        onReady: (id, initial) => {
-          setMyPeerId(id);
-          setPeers(initial);
-        },
-        onPeerJoined: (peer) =>
-          setPeers((cur) => [...cur.filter((p) => p.peerId !== peer.peerId), peer]),
-        onRemoteStream: (peerId, s) => setRemotes((cur) => new Map(cur).set(peerId, s)),
-        onPeerLeft: (peerId) => {
-          setRemotes((cur) => {
-            const next = new Map(cur);
-            next.delete(peerId);
-            return next;
-          });
-          setPeers((cur) => cur.filter((p) => p.peerId !== peerId));
-        },
-        onCode: setCode,
-        onWhiteboard: (stroke) => {
-          wbSeq.current += 1;
-          setWbIncoming({ seq: wbSeq.current, stroke: stroke as Stroke });
-        },
-        onChat: (m: InterviewChatMessage) =>
-          setMessages((cur) => [...cur, { ...m, publicId: `${cur.length}-${m.sentAt}` }]),
-        onSurface: setSurface,
-        onQuestion: (q) => {
-          setQuestion(q);
-          // The whole point of pinning a question is that the other side sees it,
-          // so surface the reader rather than leaving a silent badge behind.
-          if (q) setPanel('question');
-        },
-        onPresence: setPresence,
-        onError: (_code, message) => setNotice(message),
-        onEnded: () => {
-          setEnded(true);
-          onEnded();
-        },
-      });
-      sessionRef.current = session;
-      session.connect();
-    })();
+    const media = stream ?? new MediaStream();
+    const session = new InterviewSession(publicId, media, {
+      onStatus: setStatus,
+      onWaiting: () => setAdmission('waiting'),
+      onAdmitted: () => setAdmission('in'),
+      onDenied: () => setAdmission('denied'),
+      onLobby: setLobbyQueue,
+      onReady: (id, initial) => {
+        setAdmission('in');
+        setMyPeerId(id);
+        setPeers(initial);
+      },
+      onPeerJoined: (peer) =>
+        setPeers((cur) => [...cur.filter((p) => p.peerId !== peer.peerId), peer]),
+      onRemoteStream: (peerId, s) => setRemotes((cur) => new Map(cur).set(peerId, s)),
+      onPeerLeft: (peerId) => {
+        setRemotes((cur) => {
+          const next = new Map(cur);
+          next.delete(peerId);
+          return next;
+        });
+        setPeers((cur) => cur.filter((p) => p.peerId !== peerId));
+      },
+      onCode: setCode,
+      onWhiteboard: (stroke) => {
+        wbSeq.current += 1;
+        setWbIncoming({ seq: wbSeq.current, stroke: stroke as Stroke });
+      },
+      onChat: (m: InterviewChatMessage) =>
+        setMessages((cur) => [...cur, { ...m, publicId: `${cur.length}-${m.sentAt}` }]),
+      onSurface: setSurface,
+      onQuestion: (q) => {
+        setQuestion(q);
+        // The whole point of pinning a question is that the other side sees it,
+        // so surface the reader rather than leaving a silent badge behind.
+        if (q) setPanel('question');
+      },
+      onPresence: setPresence,
+      onError: (_code, message) => setNotice(message),
+      onEnded: () => {
+        setEnded(true);
+        onEnded();
+      },
+    });
+    sessionRef.current = session;
+    session.connect();
     return () => {
-      stopped = true;
-      session?.close();
+      session.close();
       sessionRef.current = null;
     };
   }, [publicId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -308,16 +325,18 @@ export function MeetRoom({
     return () => clearTimeout(t);
   }, [notice]);
 
-  // Guard against closing the tab mid-interview.
-  useEffect(() => {
-    if (ended) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent): void => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [ended]);
+  /**
+   * The room is locked from the moment it opens until the interview ends: Back
+   * is swallowed, closing the tab warns, and the viewport is held fullscreen.
+   * Applies to every participant — candidate, recruiter and company side alike.
+   */
+  // Only once you are actually IN. Someone still knocking — or turned away — has
+  // not started an interview, and trapping them at the door would be absurd.
+  const locked = admission === 'in' && !ended && !exiting;
+  useExitGuard(locked, () =>
+    setNotice('You cannot leave a live interview — the interviewer ends it for everyone.'),
+  );
+  const fullscreen = useFullscreenLock(locked);
 
   // Escape closes the open side panel (never the room itself).
   useEffect(() => {
@@ -427,11 +446,19 @@ export function MeetRoom({
     }
   };
 
-  const leave = (): void => {
-    if (!confirm('Leave the interview room?')) return;
+  /**
+   * The single exit that is not "the interview ended": a candidate who declines
+   * to be recorded. Consent has to stay refusable, so this one path — and only
+   * this one — is allowed to release the lock and walk out.
+   */
+  const leaveWithoutRecording = (): void => {
+    setExiting(true);
     sessionRef.current?.close();
-    navigate('/app/interviews');
+    onLeave();
   };
+
+  const admit = (peerId: string): void => sessionRef.current?.admit(peerId);
+  const deny = (peerId: string): void => sessionRef.current?.deny(peerId);
 
   // ---- Derived --------------------------------------------------------------
 
@@ -487,6 +514,14 @@ export function MeetRoom({
             <Users className="h-3.5 w-3.5" aria-hidden="true" />
             <span className="tabular-nums">{presence}</span>
           </span>
+          {locked ? (
+            <span
+              title="You cannot leave or navigate away until the interview is ended"
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/70"
+            >
+              <Lock className="h-3 w-3" aria-hidden="true" /> Locked
+            </span>
+          ) : null}
         </div>
       </header>
 
@@ -639,7 +674,8 @@ export function MeetRoom({
           active={panel === 'question'}
           onClick={() => setPanel((p) => (p === 'question' ? null : 'question'))}
         />
-        <DockButton icon={PhoneOff} label="Leave" danger onClick={leave} />
+        {/* No "leave": the room is locked until it is ended. Only the host has
+            an exit, and taking it ends the interview for everyone. */}
         {iv.canManage ? (
           <DockButton
             icon={Square}
@@ -650,12 +686,36 @@ export function MeetRoom({
               if (confirm('End the interview for everyone?')) end.mutate();
             }}
           />
-        ) : null}
+        ) : (
+          <DockButton icon={Lock} label="Locked until ended" disabled onClick={() => undefined} />
+        )}
       </MeetDock>
 
       {/* The candidate is told BEFORE any capture begins, and can walk away. */}
+      {/* Someone is knocking. Shown to interviewers wherever they are looking —
+          a waiting candidate is time-sensitive in a way a panel badge is not. */}
+      {lobbyQueue.length > 0 && iv.canManage && admission === 'in' && !ended ? (
+        <LobbyRequests waiting={lobbyQueue} onAdmit={admit} onDeny={deny} />
+      ) : null}
+
       {isCandidate && !consentAcked && !ended ? (
-        <RecordingConsentNotice onAcknowledge={() => setConsentAcked(true)} onDecline={leave} />
+        <RecordingConsentNotice
+          onAcknowledge={() => setConsentAcked(true)}
+          onDecline={leaveWithoutRecording}
+        />
+      ) : null}
+
+      <FullscreenGate
+        open={locked && !fullscreen.held}
+        onEnter={fullscreen.request}
+        title="This interview runs fullscreen"
+        detail="The room needs the whole screen while the interview is live. It stays that way until the interviewer ends the session."
+      />
+
+      {/* Until the door opens, the room behind this is empty by construction: the
+          gateway sends a waiting socket no roster, no signaling and no chat. */}
+      {admission !== 'in' && !ended ? (
+        <AdmissionGate state={admission} hostName={iv.host.name} onGiveUp={onLeave} />
       ) : null}
 
       {ended ? (
@@ -671,6 +731,112 @@ export function MeetRoom({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * What a candidate sees between knocking and being let in.
+ *
+ * Deliberately a full cover rather than a banner: there is genuinely nothing
+ * behind it yet, and a room that looks half-joined invites people to start
+ * talking to an empty call.
+ */
+function AdmissionGate({
+  state,
+  hostName,
+  onGiveUp,
+}: {
+  state: 'knocking' | 'waiting' | 'denied';
+  hostName: string;
+  onGiveUp: () => void;
+}) {
+  const denied = state === 'denied';
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="absolute inset-0 z-30 flex items-center justify-center bg-neutral-950 p-6 text-center"
+    >
+      <div className="max-w-sm">
+        {denied ? (
+          <>
+            <DoorClosed className="mx-auto mb-4 h-8 w-8 text-white/60" aria-hidden="true" />
+            <p className="text-[15px] font-medium text-white">You were not let in</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-white/60">
+              {hostName} did not admit you to this interview. If this is unexpected, contact your
+              placement office — you can also ask to join again from the lobby.
+            </p>
+          </>
+        ) : (
+          <>
+            <Loader2
+              className="mx-auto mb-4 h-8 w-8 animate-spin text-white/60 motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+            <p className="text-[15px] font-medium text-white">Asking to be let in…</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-white/60">
+              {hostName} has been told you are here. You will join automatically the moment they
+              admit you — keep this tab open.
+            </p>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={onGiveUp}
+          className="mt-5 rounded-lg border border-white/20 px-4 py-2 text-[13px] font-medium text-white/80 hover:bg-white/10"
+        >
+          {denied ? 'Back to the lobby' : 'Cancel'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The interviewer's side of the door. Sits above the dock as a card rather than
+ * hiding in the People panel: someone is standing outside waiting on this exact
+ * decision, and a badge they might not notice is not good enough.
+ */
+function LobbyRequests({
+  waiting,
+  onAdmit,
+  onDeny,
+}: {
+  waiting: LobbyWaiter[];
+  onAdmit: (peerId: string) => void;
+  onDeny: (peerId: string) => void;
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center px-4">
+      <div className="pointer-events-auto w-full max-w-sm space-y-2 rounded-2xl border border-white/15 bg-neutral-900/95 p-3 shadow-xl backdrop-blur">
+        {waiting.map((w) => (
+          <div key={w.peerId} className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <DoorOpen className="h-4 w-4 shrink-0 text-white/50" aria-hidden="true" />
+              <p className="truncate text-[13px] text-white">
+                <strong className="font-medium">{w.displayName}</strong> wants to join
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onDeny(w.peerId)}
+                className="rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-white/60 hover:bg-white/10 hover:text-white"
+              >
+                Deny
+              </button>
+              <button
+                type="button"
+                onClick={() => onAdmit(w.peerId)}
+                className="rounded-lg bg-white px-3 py-1.5 text-[12px] font-semibold text-neutral-900 hover:bg-white/90"
+              >
+                Admit
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

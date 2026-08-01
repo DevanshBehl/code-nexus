@@ -24,6 +24,7 @@ import {
 import type { UseMutationResult } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api.ts';
 import { contestKeys, formatDateTime } from '../../lib/contests.ts';
+import { requestFullscreenNow } from '../../lib/roomLock.ts';
 import { AppShell } from '../../components/dashboard/AppShell.tsx';
 import { Panel } from '../../components/dashboard/Panel.tsx';
 import { QueryState } from '../../components/dashboard/QueryState.tsx';
@@ -206,7 +207,12 @@ function StudentAction({
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={() => navigate(`/app/contests/${publicId}/arena`)}
+            onClick={() => {
+              // Ask while the click still counts as user activation — the arena
+              // is a fullscreen locked room and asking on mount is often too late.
+              requestFullscreenNow();
+              navigate(`/app/contests/${publicId}/arena`);
+            }}
             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-emerald-500"
           >
             <Play className="h-4 w-4" /> Resume attempt
@@ -226,7 +232,10 @@ function StudentAction({
         <button
           type="button"
           disabled={start.isPending}
-          onClick={() => start.mutate()}
+          onClick={() => {
+            requestFullscreenNow();
+            start.mutate();
+          }}
           className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           <Play className="h-4 w-4" /> Start contest

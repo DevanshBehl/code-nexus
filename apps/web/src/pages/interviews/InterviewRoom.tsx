@@ -1,9 +1,10 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Radio } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import type { InterviewDetail } from '@code-nexus/types';
 import { api, ApiError } from '../../lib/api.ts';
-import { interviewKeys, formatDateTime } from '../../lib/interviews.ts';
+import { interviewKeys } from '../../lib/interviews.ts';
 import { AppShell } from '../../components/dashboard/AppShell.tsx';
 import { Panel } from '../../components/dashboard/Panel.tsx';
 import { QueryState } from '../../components/dashboard/QueryState.tsx';
@@ -12,101 +13,117 @@ import {
   FeedbackList,
   InterviewStatusBadge,
 } from '../../components/interviews/InterviewBits.tsx';
+import { Lobby } from './Lobby.tsx';
 import { MeetRoom } from './MeetRoom.tsx';
 
+/** What the joiner brought with them from the lobby. */
+interface JoinedMedia {
+  stream: MediaStream | null;
+  micOn: boolean;
+  camOn: boolean;
+}
+
+/**
+ * The interview page has three shapes, and which one you get is not decided by
+ * role but by where you are in the journey:
+ *
+ *  1. LOBBY   — device check + the door. Both sides start here, at any status,
+ *               which is what lets a candidate turn up early instead of finding
+ *               a page with nothing on it.
+ *  2. ROOM    — joined (or knocking); full-viewport and locked.
+ *  3. RECAP   — the interview is over: snapshot, feedback, next steps.
+ */
 export function InterviewRoom() {
   const { publicId = '' } = useParams();
   const qc = useQueryClient();
+  const [joined, setJoined] = useState<JoinedMedia | null>(null);
+
   const detail = useQuery({
     queryKey: interviewKeys.detail(publicId),
     queryFn: () => api.get<InterviewDetail>(`/interviews/${publicId}`),
+    // While a candidate waits in the lobby for the room to open, this poll IS the
+    // feature — it is what makes the join button appear without a refresh.
+    refetchInterval: (q) => (q.state.data?.status === 'SCHEDULED' ? 5_000 : false),
   });
   const iv = detail.data;
+  const invalidate = (): Promise<void> =>
+    qc.invalidateQueries({ queryKey: interviewKeys.detail(publicId) });
 
-  // A live interview takes over the whole viewport: no app shell, no sidebar, no
-  // way to drift into the rest of the platform until the call is over.
-  if (iv?.status === 'LIVE') {
+  // The page owns the camera once the lobby hands it over, so it is the only
+  // place that can reliably switch it off again — including on unmount, which is
+  // where a stream created inside the room itself would leak.
+  const joinedRef = useRef<JoinedMedia | null>(null);
+  joinedRef.current = joined;
+  useEffect(
+    () => () => {
+      joinedRef.current?.stream?.getTracks().forEach((t) => t.stop());
+    },
+    [],
+  );
+
+  /** Leaving the room drops the devices; the lobby acquires them fresh. */
+  const backToLobby = useCallback((): void => {
+    setJoined((cur) => {
+      cur?.stream?.getTracks().forEach((t) => t.stop());
+      return null;
+    });
+  }, []);
+
+  if (iv && joined) {
     return (
       <MeetRoom
         iv={iv}
         publicId={publicId}
-        onEnded={() => qc.invalidateQueries({ queryKey: interviewKeys.detail(publicId) })}
+        stream={joined.stream}
+        initialMic={joined.micOn}
+        initialCam={joined.camOn}
+        onEnded={() => void invalidate()}
+        onLeave={backToLobby}
+      />
+    );
+  }
+
+  // Over and done with — the recap belongs in the app, not behind a lobby.
+  if (iv && (iv.status === 'ENDED' || iv.status === 'CANCELLED')) {
+    return (
+      <AppShell title={iv.title ?? 'Interview'} fullBleed>
+        <div className="mx-auto w-full max-w-6xl px-4 py-4">
+          <Link
+            to="/app/interviews"
+            className="mb-4 inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-fg"
+          >
+            <ArrowLeft className="h-4 w-4" /> Interviews
+          </Link>
+          <Recap iv={iv} publicId={publicId} />
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (iv) {
+    return (
+      <Lobby
+        iv={iv}
+        publicId={publicId}
+        onJoin={(stream, micOn, camOn) => setJoined({ stream, micOn, camOn })}
+        onWentLive={() => void invalidate()}
       />
     );
   }
 
   return (
-    <AppShell title={iv?.title ?? 'Interview'} fullBleed>
+    <AppShell title="Interview" fullBleed>
       <div className="mx-auto w-full max-w-6xl px-4 py-4">
-        <Link
-          to="/app/interviews"
-          className="mb-4 inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-fg"
-        >
-          <ArrowLeft className="h-4 w-4" /> Interviews
-        </Link>
         <QueryState
           isLoading={detail.isLoading}
           isError={detail.isError}
           onRetry={() => detail.refetch()}
         >
-          {iv ? <RoomBody iv={iv} publicId={publicId} /> : null}
+          {null}
         </QueryState>
       </div>
     </AppShell>
   );
-}
-
-function RoomBody({ iv, publicId }: { iv: InterviewDetail; publicId: string }) {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: interviewKeys.detail(publicId) });
-
-  const lifecycle = useMutation({
-    mutationFn: (action: 'go-live' | 'cancel') => api.post(`/interviews/${publicId}/${action}`),
-    onSuccess: invalidate,
-  });
-
-  if (iv.status === 'SCHEDULED') {
-    return (
-      <Panel title={iv.title ?? 'Interview'} action={<InterviewStatusBadge status={iv.status} />}>
-        <p className="text-[13px] text-muted">
-          Scheduled for {formatDateTime(iv.scheduledStartsAt)} · {iv.durationMinutes} min ·{' '}
-          candidate <strong className="text-fg">{iv.candidate.displayName}</strong>.
-        </p>
-        {iv.question ? (
-          <p className="mt-2 text-[13px] text-muted">
-            Coding problem: <strong className="text-fg">{iv.question.title}</strong>
-          </p>
-        ) : null}
-        <div className="mt-5 flex items-center gap-3 border-t border-line pt-5">
-          {iv.canManage ? (
-            <button
-              type="button"
-              disabled={lifecycle.isPending}
-              onClick={() => lifecycle.mutate('go-live')}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
-            >
-              <Radio className="h-4 w-4" /> Go live
-            </button>
-          ) : (
-            <p className="text-[13px] text-muted">Waiting for the interviewer to start the room…</p>
-          )}
-          {iv.canManage ? (
-            <button
-              type="button"
-              onClick={() => lifecycle.mutate('cancel')}
-              className="text-[13px] font-medium text-red-500 hover:underline"
-            >
-              Cancel
-            </button>
-          ) : null}
-        </div>
-      </Panel>
-    );
-  }
-
-  // LIVE is intercepted upstream by the full-screen MeetRoom, so anything that
-  // reaches here is over (or was cancelled).
-  return <Recap iv={iv} publicId={publicId} />;
 }
 
 function Recap({ iv, publicId }: { iv: InterviewDetail; publicId: string }) {
