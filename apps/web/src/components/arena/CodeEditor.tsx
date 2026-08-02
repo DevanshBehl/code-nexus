@@ -1,7 +1,9 @@
-import Editor, { type Monaco, type EditorProps } from '@monaco-editor/react';
+import { useEffect, useRef } from 'react';
+import Editor, { type Monaco, type EditorProps, type OnMount } from '@monaco-editor/react';
 import type { ProgrammingLanguage } from '@code-nexus/types';
 import { LANGUAGE_META } from '@code-nexus/types';
 import { useTheme } from '../../lib/theme.ts';
+import { tabSizeFor } from '../../lib/editor.ts';
 
 const MONO_FONT =
   "'SF Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Consolas, monospace";
@@ -62,8 +64,7 @@ const OPTIONS: EditorProps['options'] = {
   minimap: { enabled: false },
   fontFamily: MONO_FONT,
   fontLigatures: true,
-  fontSize: 13,
-  lineHeight: 21,
+  lineHeight: 1.6,
   letterSpacing: 0.2,
   smoothScrolling: true,
   cursorBlinking: 'smooth',
@@ -77,8 +78,24 @@ const OPTIONS: EditorProps['options'] = {
   scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
   overviewRulerLanes: 0,
   automaticLayout: true,
-  tabSize: 2,
   fixedOverflowWidgets: true,
+  // The editing affordances people expect from a real IDE and notice the absence
+  // of immediately: pairs close, suggestions appear as you type, a stray tab does
+  // not silently become the wrong indentation.
+  autoClosingBrackets: 'languageDefined',
+  autoClosingQuotes: 'languageDefined',
+  autoIndent: 'full',
+  formatOnPaste: true,
+  detectIndentation: false,
+  insertSpaces: true,
+  suggestOnTriggerCharacters: true,
+  quickSuggestions: { other: true, comments: false, strings: false },
+  tabCompletion: 'on',
+  snippetSuggestions: 'inline',
+  showFoldingControls: 'mouseover',
+  renderWhitespace: 'selection',
+  stickyScroll: { enabled: false },
+  contextmenu: true,
 };
 
 interface CodeEditorProps {
@@ -91,11 +108,55 @@ interface CodeEditorProps {
    * cursor for a shared one. (The real write-lock is enforced at the gateway.)
    */
   readOnly?: boolean;
+  fontSize?: number;
+  wordWrap?: boolean;
+  /** Bound to the same shortcut everywhere: Cmd/Ctrl+Enter. */
+  onRun?: () => void;
+  /** Cmd/Ctrl+Shift+Enter. Absent on surfaces with nothing to submit to. */
+  onSubmit?: () => void;
+  /** Caret position, for the status bar. */
+  onCursorChange?: (line: number, column: number) => void;
 }
 
 /** Monaco editor themed to match the app, with a premium code-editing feel. */
-export function CodeEditor({ language, value, onChange, readOnly = false }: CodeEditorProps) {
+export function CodeEditor({
+  language,
+  value,
+  onChange,
+  readOnly = false,
+  fontSize = 13,
+  wordWrap = false,
+  onRun,
+  onSubmit,
+  onCursorChange,
+}: CodeEditorProps) {
   const { theme } = useTheme();
+  // Commands are registered once on mount but must call whatever the CURRENT
+  // handler is — re-registering on every render would leak commands, and closing
+  // over the first render's handler would run yesterday's code.
+  const run = useRef(onRun);
+  const submit = useRef(onSubmit);
+  const cursor = useRef(onCursorChange);
+  useEffect(() => {
+    run.current = onRun;
+    submit.current = onSubmit;
+    cursor.current = onCursorChange;
+  }, [onRun, onSubmit, onCursorChange]);
+
+  const onMount: OnMount = (editor, monaco) => {
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => run.current?.());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () =>
+      submit.current?.(),
+    );
+    // Swallow the browser's Save dialog: in an editor, Cmd+S means "I am done
+    // typing", and a download prompt is a jarring answer to that.
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => undefined);
+    editor.onDidChangeCursorPosition((e) =>
+      cursor.current?.(e.position.lineNumber, e.position.column),
+    );
+    cursor.current?.(1, 1);
+  };
+
   return (
     <Editor
       height="100%"
@@ -104,12 +165,15 @@ export function CodeEditor({ language, value, onChange, readOnly = false }: Code
       value={value}
       onChange={(v) => onChange(v ?? '')}
       beforeMount={defineThemes}
+      onMount={onMount}
       loading={<div className="p-4 text-[13px] text-muted">Loading editor…</div>}
-      options={
-        readOnly
-          ? { ...OPTIONS, readOnly: true, domReadOnly: true, renderLineHighlight: 'none' }
-          : OPTIONS
-      }
+      options={{
+        ...OPTIONS,
+        fontSize,
+        tabSize: tabSizeFor(language),
+        wordWrap: wordWrap ? 'on' : 'off',
+        ...(readOnly ? { readOnly: true, domReadOnly: true, renderLineHighlight: 'none' } : {}),
+      }}
     />
   );
 }

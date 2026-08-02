@@ -13,6 +13,7 @@ import {
   type ContestListItem,
   type ContestPhase,
   type ContestQuestionRow,
+  type ContestSubmissionRow,
   type ContestUpdateInput,
   type LeaderboardEntry,
   type LeaderboardResponse,
@@ -674,6 +675,43 @@ export async function getContestQuestions(auth: Auth, publicId: string): Promise
       status: solved.has(q.id) ? 'solved' : 'unsolved',
     };
   });
+}
+
+/**
+ * The caller's own submissions in this contest, newest first.
+ *
+ * Scoped to the caller and to this contest — a participant may see what they
+ * sent and what came back of it, and nothing about anyone else. Standings are
+ * the leaderboard's job, and they only ever expose aggregates.
+ *
+ * A host has no submissions of their own to look at; an empty list is the honest
+ * answer rather than an error, so the room's UI needs no special case.
+ */
+export async function listContestSubmissions(
+  auth: Auth,
+  publicId: string,
+): Promise<ContestSubmissionRow[]> {
+  const { contest } = await loadVisibleContest(auth, publicId);
+  if (auth.role !== 'STUDENT') return [];
+  const student = await requireStudent(auth);
+
+  const rows = await prisma.submission.findMany({
+    where: { contestId: contest.id, studentId: student.id, deletedAt: null },
+    include: { question: { select: { slug: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+  return rows.map((s) => ({
+    publicId: s.publicId,
+    slug: s.question.slug,
+    kind: s.kind,
+    language: s.language,
+    status: s.status,
+    verdict: s.verdict,
+    testsPassed: s.testsPassed,
+    testsTotal: s.testsTotal,
+    createdAt: s.createdAt.toISOString(),
+  }));
 }
 
 // ---- Leaderboard ------------------------------------------------------------

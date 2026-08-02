@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { PrismaClient, Role } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { QUESTIONS, starterCodeFor } from './questions.js';
 
 /**
  * Idempotent seed (prompt_phase1.md §6.4): safe to run repeatedly.
@@ -192,126 +193,30 @@ async function upsertDemoDriveAndApplication(): Promise<void> {
   });
 }
 
-// --- Phase 6: Code Arena question bank (stdin/stdout model) -------------------
-
-interface SeedTest {
-  input: string;
-  expectedOutput: string;
-  isSample: boolean;
-}
-interface SeedQuestion {
-  slug: string;
-  title: string;
-  description: string;
-  constraints?: string;
-  difficulty: 'EASY' | 'MEDIUM' | 'HARD';
-  topic: 'ARRAY' | 'STRING' | 'MATH' | 'HASHMAP' | 'STACK_QUEUE';
-  tests: SeedTest[];
-}
-
-const QUESTIONS: SeedQuestion[] = [
-  {
-    slug: 'double-the-number',
-    title: 'Double the Number',
-    description: 'Read a single integer n from standard input and print n * 2.',
-    constraints: '-10^9 <= n <= 10^9',
-    difficulty: 'EASY',
-    topic: 'MATH',
-    tests: [
-      { input: '2', expectedOutput: '4', isSample: true },
-      { input: '10', expectedOutput: '20', isSample: false },
-      { input: '-3', expectedOutput: '-6', isSample: false },
-      { input: '0', expectedOutput: '0', isSample: false },
-    ],
-  },
-  {
-    slug: 'sum-of-two',
-    title: 'Sum of Two Numbers',
-    description:
-      'The input contains two space-separated integers a and b on one line. Print a + b.',
-    difficulty: 'EASY',
-    topic: 'MATH',
-    tests: [
-      { input: '3 5', expectedOutput: '8', isSample: true },
-      { input: '100 250', expectedOutput: '350', isSample: false },
-      { input: '-4 4', expectedOutput: '0', isSample: false },
-    ],
-  },
-  {
-    slug: 'reverse-string',
-    title: 'Reverse a String',
-    description: 'Read a single line string s and print it reversed.',
-    difficulty: 'EASY',
-    topic: 'STRING',
-    tests: [
-      { input: 'hello', expectedOutput: 'olleh', isSample: true },
-      { input: 'codenexus', expectedOutput: 'suxenedoc', isSample: false },
-      { input: 'a', expectedOutput: 'a', isSample: false },
-    ],
-  },
-  {
-    slug: 'max-in-array',
-    title: 'Maximum in an Array',
-    description:
-      'The first line contains an integer n. The second line contains n space-separated integers. Print the maximum.',
-    constraints: '1 <= n <= 10^5',
-    difficulty: 'EASY',
-    topic: 'ARRAY',
-    tests: [
-      { input: '5\n3 7 2 9 4', expectedOutput: '9', isSample: true },
-      { input: '3\n-1 -5 -3', expectedOutput: '-1', isSample: false },
-      { input: '1\n42', expectedOutput: '42', isSample: false },
-    ],
-  },
-  {
-    slug: 'count-vowels',
-    title: 'Count the Vowels',
-    description: 'Read a single line string and print the number of vowels (a, e, i, o, u) in it.',
-    difficulty: 'EASY',
-    topic: 'HASHMAP',
-    tests: [
-      { input: 'education', expectedOutput: '5', isSample: true },
-      { input: 'rhythm', expectedOutput: '0', isSample: false },
-      { input: 'aeiou', expectedOutput: '5', isSample: false },
-    ],
-  },
-  {
-    slug: 'balanced-brackets',
-    title: 'Balanced Brackets',
-    description:
-      'Read a single line containing only the characters ()[]{}. Print "YES" if the brackets are balanced, otherwise "NO".',
-    difficulty: 'MEDIUM',
-    topic: 'STACK_QUEUE',
-    tests: [
-      { input: '([]{})', expectedOutput: 'YES', isSample: true },
-      { input: '([)]', expectedOutput: 'NO', isSample: false },
-      { input: '(((', expectedOutput: 'NO', isSample: false },
-      { input: '{[()]}', expectedOutput: 'YES', isSample: false },
-    ],
-  },
-];
+// --- Phase 6: Code Arena question bank ---------------------------------------
+//
+// The bank itself (statements, testcases and the per-language starter code that
+// comes with each question) lives in `questions.ts` — it is content, and it had
+// outgrown being a literal in the middle of the account seeding.
 
 async function seedQuestions(): Promise<void> {
   for (const def of QUESTIONS) {
+    const shared = {
+      title: def.title,
+      description: def.description,
+      constraints: def.constraints ?? null,
+      difficulty: def.difficulty,
+      topic: def.topic,
+      // Re-seeded on every run: a stub that has drifted from the statement it
+      // belongs to is worse than no stub, and this is the only place either is
+      // authored.
+      starterCode: starterCodeFor(def),
+      published: true,
+    };
     const q = await prisma.question.upsert({
       where: { slug: def.slug },
-      update: {
-        title: def.title,
-        description: def.description,
-        constraints: def.constraints ?? null,
-        difficulty: def.difficulty,
-        topic: def.topic,
-        published: true,
-      },
-      create: {
-        slug: def.slug,
-        title: def.title,
-        description: def.description,
-        constraints: def.constraints ?? null,
-        difficulty: def.difficulty,
-        topic: def.topic,
-        published: true,
-      },
+      update: shared,
+      create: { slug: def.slug, ...shared },
     });
     const existing = await prisma.testCase.count({ where: { questionId: q.id } });
     if (existing === 0) {

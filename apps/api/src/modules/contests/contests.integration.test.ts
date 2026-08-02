@@ -214,6 +214,21 @@ describe.skipIf(!DB_READY)('Phase 7 contests (integration, no worker)', () => {
       },
     });
 
+    // The attempt's own verdict history: the caller's submissions in THIS
+    // contest, carrying the problem each was for.
+    const mine = await student.get(`/contests/${cid}/submissions`);
+    expect(mine.status).toBe(200);
+    expect(mine.body.submissions).toHaveLength(1);
+    expect(mine.body.submissions[0]).toMatchObject({
+      slug: BANK_SLUG,
+      kind: 'SUBMIT',
+      verdict: 'ACCEPTED',
+    });
+    // It is per-person, not per-room: the host sees none of it here, and the
+    // practice history stays a separate ledger from the contest one.
+    expect((await uni.get(`/contests/${cid}/submissions`)).body.submissions).toEqual([]);
+    expect((await student.get('/arena/submissions')).body.submissions).toHaveLength(0);
+
     // Finish → locked: no more submissions, no re-start.
     expect((await student.post(`/contests/${cid}/finish`)).status).toBe(200);
     expect(

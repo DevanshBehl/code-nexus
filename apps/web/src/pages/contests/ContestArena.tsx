@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -6,29 +6,41 @@ import {
   Play,
   Send,
   CheckCircle2,
-  XCircle,
   Loader2,
   Trophy,
   Timer,
   Flag,
   Lock,
+  ListChecks,
+  Terminal,
 } from 'lucide-react';
 import {
   isTerminalSubmissionStatus,
   LANGUAGE_META,
   type ContestDetail,
+  type ContestSubmissionRow,
+  type ContestSubmissionsResponse,
   type EnqueueResponse,
   type ProgrammingLanguage,
   type QuestionDetail,
   type SubmissionDto,
 } from '@code-nexus/types';
 import { api, ApiError } from '../../lib/api.ts';
-import { STARTER_TEMPLATES, VERDICT_LABELS, isAccepted } from '../../lib/arena.ts';
-import { contestKeys } from '../../lib/contests.ts';
+import {
+  isAccepted,
+  starterCodeFor,
+  timeAgo,
+  VERDICT_LABELS,
+  VERDICT_STYLES,
+} from '../../lib/arena.ts';
+import { contestKeys, problemLetter } from '../../lib/contests.ts';
+import { clearDraft, draftKey, loadDraft, saveDraft, SUBMIT_SHORTCUT } from '../../lib/editor.ts';
 import { useExitGuard, useFullscreenLock } from '../../lib/roomLock.ts';
 import { AppShell } from '../../components/dashboard/AppShell.tsx';
-import { CodeEditor } from '../../components/arena/CodeEditor.tsx';
 import { DifficultyBadge } from '../../components/arena/DifficultyBadge.tsx';
+import { EditorPane } from '../../components/arena/EditorPane.tsx';
+import { ProblemStatement } from '../../components/arena/ProblemStatement.tsx';
+import { ResultPanel } from '../../components/arena/ResultPanel.tsx';
 import { FullscreenGate } from '../../components/rooms/FullscreenGate.tsx';
 import { Countdown } from '../../components/contests/ContestBits.tsx';
 
@@ -41,9 +53,21 @@ type CodeMap = Record<string, Partial<Record<ProgrammingLanguage, string>>>;
  * way out is Finish & submit (or the clock running out), because an attempt you
  * can wander away from and come back to is not a timed attempt.
  *
+ * Inside, it reads like a round rather than a page of exercises. Problems are
+ * LETTERS on a strip across the top, each carrying its own state — solved, tried,
+ * untouched — so the standing question of a contest ("what have I got, and what
+ * is left?") is answered at a glance instead of by clicking through. The verdict
+ * history sits beside the statement, because in a timed round the last five
+ * verdicts are context, not archaeology.
+ *
+ * Every keystroke is drafted to this browser. A contest is the worst possible
+ * place to discover that a reload costs you forty minutes of work.
+ *
  * Once there is no live attempt — submitted, expired, or never started — the page
  * is an ordinary one inside the app shell again.
  */
+
+type SidePanel = 'statement' | 'submissions';
 
 export function ContestArena() {
   const { publicId = '' } = useParams();
@@ -73,7 +97,7 @@ export function ContestArena() {
     onSuccess: toLeaderboard,
   });
 
-  const qs = questions.data?.questions ?? [];
+  const qs = useMemo(() => questions.data?.questions ?? [], [questions.data]);
   const [idx, setIdx] = useState(0);
   const current = qs[idx];
   const allowed = useMemo<ProgrammingLanguage[]>(
@@ -85,23 +109,66 @@ export function ContestArena() {
   const [codeMap, setCodeMap] = useState<CodeMap>({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string>();
+  const [panel, setPanel] = useState<SidePanel>('statement');
+  const [saved, setSaved] = useState(false);
 
   // Keep the language valid for this contest.
   useEffect(() => {
     if (allowed.length && !allowed.includes(language)) setLanguage(allowed[0]!);
   }, [allowed, language]);
 
-  const code = useMemo(() => {
-    if (!current) return '';
-    const byLang = codeMap[current.slug] ?? {};
-    return byLang[language] ?? current.starterCode?.[language] ?? STARTER_TEMPLATES[language];
-  }, [codeMap, current, language]);
+  // ---- The buffer, per problem and language ---------------------------------
+  const draftFor = useCallback(
+    (slug: string, lang: ProgrammingLanguage) => draftKey(`contest:${publicId}`, slug, lang),
+    [publicId],
+  );
 
-  const setCode = (v: string) => {
+  useEffect(() => {
     if (!current) return;
-    setCodeMap((m) => ({ ...m, [current.slug]: { ...(m[current.slug] ?? {}), [language]: v } }));
+    const slug = current.slug;
+    setCodeMap((m) => {
+      if (m[slug]?.[language] !== undefined) return m;
+      const draft = loadDraft(draftFor(slug, language));
+      if (draft == null) return m;
+      return { ...m, [slug]: { ...(m[slug] ?? {}), [language]: draft } };
+    });
+  }, [current, language, draftFor]);
+
+  const code = current
+    ? (codeMap[current.slug]?.[language] ?? starterCodeFor(current, language))
+    : '';
+  const codeRef = useRef(code);
+  codeRef.current = code;
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setCode = (v: string): void => {
+    if (!current) return;
+    const slug = current.slug;
+    setCodeMap((m) => ({ ...m, [slug]: { ...(m[slug] ?? {}), [language]: v } }));
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveDraft(draftFor(slug, language), v);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1600);
+    }, 500);
+  };
+  useEffect(
+    () => () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    },
+    [],
+  );
+
+  const resetCode = (): void => {
+    if (!current) return;
+    clearDraft(draftFor(current.slug, language));
+    setCodeMap((m) => ({
+      ...m,
+      [current.slug]: { ...(m[current.slug] ?? {}), [language]: starterCodeFor(current, language) },
+    }));
   };
 
+  // ---- Judging --------------------------------------------------------------
   const submissionQuery = useQuery({
     queryKey: activeId ? contestKeys.submission(activeId) : ['arena', 'submission', 'none'],
     queryFn: () => api.get<SubmissionDto>(`/arena/submissions/${activeId}`),
@@ -114,28 +181,43 @@ export function ContestArena() {
   const sub = submissionQuery.data;
   const pending = !!activeId && (!sub || !isTerminalSubmissionStatus(sub.status));
 
+  const history = useQuery({
+    queryKey: contestKeys.submissions(publicId),
+    queryFn: () => api.get<ContestSubmissionsResponse>(`/contests/${publicId}/submissions`),
+    enabled: !!contest.data?.startedAt,
+  });
+
   const terminalId = sub && isTerminalSubmissionStatus(sub.status) ? sub.publicId : null;
   useEffect(() => {
     if (!terminalId) return;
     void qc.invalidateQueries({ queryKey: contestKeys.questions(publicId) });
     void qc.invalidateQueries({ queryKey: contestKeys.detail(publicId) });
     void qc.invalidateQueries({ queryKey: contestKeys.leaderboard(publicId) });
+    void qc.invalidateQueries({ queryKey: contestKeys.submissions(publicId) });
   }, [terminalId, qc, publicId]);
 
-  const trigger = async (kind: 'run' | 'submit') => {
-    if (!current) return;
-    setError(undefined);
-    setActiveId(null);
-    try {
-      const res = await api.post<EnqueueResponse>(
-        `/contests/${publicId}/questions/${current.slug}/${kind}`,
-        { language, sourceCode: code },
-      );
-      setActiveId(res.submissionPublicId);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not submit');
-    }
-  };
+  const trigger = useCallback(
+    async (kind: 'run' | 'submit') => {
+      const q = qs[idxRef.current];
+      if (!q) return;
+      setError(undefined);
+      setActiveId(null);
+      try {
+        const res = await api.post<EnqueueResponse>(
+          `/contests/${publicId}/questions/${q.slug}/${kind}`,
+          { language, sourceCode: codeRef.current },
+        );
+        setActiveId(res.submissionPublicId);
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Could not submit');
+      }
+    },
+    [publicId, language, qs],
+  );
+  // Monaco binds its shortcuts once; they must always act on the problem that is
+  // open NOW, not the one that was open when the editor mounted.
+  const idxRef = useRef(idx);
+  idxRef.current = idx;
 
   const c = contest.data;
   const attemptActive =
@@ -158,6 +240,23 @@ export function ContestArena() {
   );
   const fullscreen = useFullscreenLock(locked);
 
+  const rows = useMemo(() => history.data?.submissions ?? [], [history.data]);
+  const attemptsBySlug = useMemo(() => {
+    const map = new Map<string, { tried: number; solved: boolean }>();
+    for (const r of rows) {
+      if (r.kind !== 'SUBMIT') continue;
+      const cur = map.get(r.slug) ?? { tried: 0, solved: false };
+      cur.tried += 1;
+      cur.solved = cur.solved || isAccepted(r.verdict);
+      map.set(r.slug, cur);
+    }
+    return map;
+  }, [rows]);
+
+  const solvedCount = qs.filter(
+    (q) => q.status === 'solved' || attemptsBySlug.get(q.slug)?.solved,
+  ).length;
+
   const body = (
     <div
       className={`flex min-h-0 flex-col bg-bg-subtle ${
@@ -169,30 +268,35 @@ export function ContestArena() {
         {locked ? (
           <span
             title="You cannot leave a running attempt — use Finish & submit"
-            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-muted"
+            className="inline-flex shrink-0 items-center gap-1.5 text-[13px] font-medium text-muted"
           >
             <Lock className="h-3.5 w-3.5" /> Attempt locked
           </span>
         ) : (
           <Link
             to={`/app/contests/${publicId}`}
-            className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-fg"
+            className="inline-flex shrink-0 items-center gap-1.5 text-[13px] text-muted hover:text-fg"
           >
             <ArrowLeft className="h-4 w-4" /> Back
           </Link>
         )}
-        <div className="flex items-center gap-2 truncate text-[13px] font-semibold text-fg">
-          {c?.title}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="truncate text-[13px] font-semibold text-fg">{c?.title}</span>
+          {qs.length > 0 ? (
+            <span className="shrink-0 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] tabular-nums text-muted">
+              {solvedCount}/{qs.length} solved
+            </span>
+          ) : null}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           {attemptActive && c?.attemptEndsAt ? (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-success-line bg-success-soft px-2.5 py-1 text-[12px] font-medium text-success">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-success-line bg-success-soft px-2.5 py-1 text-[12px] font-medium tabular-nums text-success">
               <Timer className="h-3.5 w-3.5" />
               <Countdown target={c.attemptEndsAt} onElapsed={toLeaderboard} />
             </span>
           ) : null}
           {/* Standings are a way out of the room, so they wait until the
-                attempt is over. */}
+              attempt is over. */}
           {locked ? null : (
             <Link
               to={`/app/contests/${publicId}/leaderboard`}
@@ -242,59 +346,57 @@ export function ContestArena() {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          {/* Problem switcher + statement */}
-          <div className="flex min-h-0 flex-col border-line lg:w-[42%] lg:border-r">
+          {/* Problems + statement */}
+          <div className="flex min-h-0 flex-col border-line lg:w-[44%] lg:border-r">
+            {/* The letter strip — a contest's table of contents. */}
             <div className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2">
-              {qs.map((q, i) => (
-                <button
-                  key={q.slug}
-                  type="button"
-                  onClick={() => {
-                    setIdx(i);
-                    setActiveId(null);
-                  }}
-                  className={`flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
-                    i === idx ? 'bg-surface-2 text-fg' : 'text-muted hover:text-fg'
-                  }`}
-                >
-                  {q.status === 'solved' ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                  ) : null}
-                  Q{i + 1}
-                </button>
-              ))}
+              {qs.map((q, i) => {
+                const attempt = attemptsBySlug.get(q.slug);
+                const solved = q.status === 'solved' || attempt?.solved;
+                const tried = !solved && !!attempt?.tried;
+                return (
+                  <button
+                    key={q.slug}
+                    type="button"
+                    title={q.title}
+                    onClick={() => {
+                      setIdx(i);
+                      setActiveId(null);
+                      setPanel('statement');
+                    }}
+                    className={`flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                      i === idx
+                        ? 'bg-surface-2 text-fg'
+                        : solved
+                          ? 'text-success hover:bg-surface-2'
+                          : tried
+                            ? 'text-warn hover:bg-surface-2'
+                            : 'text-muted hover:bg-surface-2 hover:text-fg'
+                    }`}
+                  >
+                    {solved ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : null}
+                    {problemLetter(i)}
+                  </button>
+                );
+              })}
+              <div className="ml-auto flex shrink-0 items-center gap-1 pl-2">
+                <PanelTab active={panel === 'statement'} onClick={() => setPanel('statement')}>
+                  Problem
+                </PanelTab>
+                <PanelTab active={panel === 'submissions'} onClick={() => setPanel('submissions')}>
+                  <span className="inline-flex items-center gap-1.5">
+                    <ListChecks className="h-3.5 w-3.5" />
+                    {rows.filter((r) => r.kind === 'SUBMIT').length || ''}
+                  </span>
+                </PanelTab>
+              </div>
             </div>
+
             <div className="min-h-0 flex-1 overflow-y-auto bg-bg px-5 py-5">
-              {current ? (
-                <div>
-                  <div className="mb-3 flex flex-wrap items-center gap-2">
-                    <h1 className="text-[18px] font-semibold tracking-tight text-fg">
-                      {current.title}
-                    </h1>
-                    <DifficultyBadge difficulty={current.difficulty} />
-                  </div>
-                  <div className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg/90">
-                    {current.description}
-                  </div>
-                  {current.constraints ? (
-                    <p className="mt-4 whitespace-pre-wrap rounded-lg bg-surface-2 px-3 py-2 font-mono text-[12.5px] text-muted">
-                      {current.constraints}
-                    </p>
-                  ) : null}
-                  <div className="mt-5 space-y-4">
-                    {current.sampleTestCases.map((t, i) => (
-                      <div
-                        key={i}
-                        className="rounded-xl border border-line bg-surface-2 p-3.5 font-mono text-[12.5px]"
-                      >
-                        <p className="mono-label text-[9px] text-faint">Input</p>
-                        <pre className="mb-2 mt-1 whitespace-pre-wrap text-fg">{t.input}</pre>
-                        <p className="mono-label text-[9px] text-faint">Output</p>
-                        <pre className="mt-1 whitespace-pre-wrap text-fg">{t.expectedOutput}</pre>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              {panel === 'submissions' ? (
+                <ContestSubmissions rows={rows} qs={qs} onOpen={(i) => setIdx(i)} />
+              ) : current ? (
+                <ProblemStatement question={current} label={problemLetter(idx)} />
               ) : (
                 <p className="text-[13px] text-muted">No questions.</p>
               )}
@@ -304,68 +406,71 @@ export function ContestArena() {
           {/* Editor + console */}
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1 flex-col" style={{ minHeight: '55vh' }}>
-              <div className="flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface px-2.5">
-                <select
-                  aria-label="Language"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as ProgrammingLanguage)}
-                  className="rounded-md border border-line-strong bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-fg focus:border-accent focus:outline-none"
-                >
-                  {allowed.map((l) => (
-                    <option key={l} value={l}>
-                      {LANGUAGE_META[l].label}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={pending || !current}
-                    onClick={() => trigger('run')}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-surface-2 px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50"
-                  >
-                    <Play className="h-3.5 w-3.5" /> Run
-                  </button>
-                  <button
-                    type="button"
-                    disabled={pending || !current}
-                    onClick={() => trigger('submit')}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-success-solid px-3.5 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
-                  >
-                    {pending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Send className="h-3.5 w-3.5" />
-                    )}
-                    Submit
-                  </button>
-                </div>
-              </div>
-              <div className="min-h-0 flex-1">
-                {current ? (
-                  <CodeEditor language={language} value={code} onChange={setCode} />
-                ) : null}
-              </div>
+              <EditorPane
+                language={language}
+                languages={allowed}
+                onLanguageChange={setLanguage}
+                value={code}
+                onChange={setCode}
+                onRun={() => void trigger('run')}
+                onSubmit={() => void trigger('submit')}
+                onReset={current ? resetCode : undefined}
+                label={
+                  current
+                    ? `${problemLetter(idx)} · ${LANGUAGE_META[language].filename}`
+                    : undefined
+                }
+                savedNote={saved ? 'Draft saved' : undefined}
+                actions={
+                  <div className="ml-1 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={pending || !current}
+                      onClick={() => void trigger('run')}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-surface-2 px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50"
+                    >
+                      <Play className="h-3.5 w-3.5" /> Run
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pending || !current}
+                      title={`Submit (${SUBMIT_SHORTCUT})`}
+                      onClick={() => void trigger('submit')}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-success-solid px-3.5 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                    >
+                      {pending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Send className="h-3.5 w-3.5" />
+                      )}
+                      Submit
+                    </button>
+                  </div>
+                }
+              />
             </div>
 
-            <div className="min-h-[180px] shrink-0 border-t border-line bg-bg p-4">
-              <p className="mono-label mb-2 text-[10px] text-faint">Result</p>
-              {error ? (
-                <p className="rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-[13px] text-danger">
-                  {error}
-                </p>
-              ) : !activeId ? (
-                <p className="text-[13px] text-muted">
-                  Run against the sample, or Submit against all testcases.
-                </p>
-              ) : pending ? (
-                <p className="inline-flex items-center gap-2 text-[13px] text-muted">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {sub?.status === 'RUNNING' ? 'Running…' : 'Queued…'}
-                </p>
-              ) : sub ? (
-                <ContestResult sub={sub} />
-              ) : null}
+            <div className="flex min-h-[190px] shrink-0 flex-col border-t border-line bg-bg">
+              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-4">
+                <Terminal className="h-3.5 w-3.5 text-faint" />
+                <span className="mono-label text-[10px] text-faint">Result</span>
+                {current ? (
+                  <span className="ml-auto flex items-center gap-2 text-[11px] text-faint">
+                    <span className="font-semibold text-muted">{problemLetter(idx)}</span>
+                    <span className="truncate">{current.title}</span>
+                    <DifficultyBadge difficulty={current.difficulty} />
+                  </span>
+                ) : null}
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <ResultPanel
+                  sub={sub}
+                  pending={pending}
+                  error={error}
+                  started={!!activeId}
+                  emptyHint="Run against the samples, or Submit to be judged on every testcase."
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -395,37 +500,92 @@ export function ContestArena() {
   );
 }
 
-function ContestResult({ sub }: { sub: SubmissionDto }) {
-  if (sub.status === 'ERROR') {
+function PanelTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+        active ? 'bg-surface-2 text-fg' : 'text-muted hover:text-fg'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The attempt's verdict history, newest first — the panel a contestant checks
+ * between submissions to remember what they have already tried.
+ */
+function ContestSubmissions({
+  rows,
+  qs,
+  onOpen,
+}: {
+  rows: ContestSubmissionRow[];
+  qs: QuestionDetail[];
+  onOpen: (index: number) => void;
+}) {
+  const submits = rows.filter((r) => r.kind === 'SUBMIT');
+  const indexOf = (slug: string): number => qs.findIndex((q) => q.slug === slug);
+
+  if (submits.length === 0) {
     return (
-      <p className="inline-flex items-center gap-2 text-[13px] text-danger">
-        <XCircle className="h-4 w-4" /> Execution failed — try again.
+      <p className="py-8 text-center text-[13px] text-muted">
+        Nothing submitted yet. Every submission you make in this contest is listed here with its
+        verdict.
       </p>
     );
   }
-  const ok = isAccepted(sub.verdict);
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <span
-          className={`inline-flex items-center gap-2 text-sm font-semibold ${ok ? 'text-success' : 'text-danger'}`}
-        >
-          {ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-          {sub.verdict ? VERDICT_LABELS[sub.verdict] : '—'}
-        </span>
-        <span className="text-[13px] text-muted">
-          {sub.testsPassed}/{sub.testsTotal} testcases
-          {!ok && sub.failedTestIndex ? ` · failed on test ${sub.failedTestIndex}` : ''}
-        </span>
-      </div>
-      {sub.kind === 'RUN' && sub.stdout != null ? (
-        <div>
-          <p className="mono-label mb-1 text-[9px] text-faint">Your output</p>
-          <pre className="whitespace-pre-wrap rounded-lg bg-surface-2 p-2.5 font-mono text-[12.5px] text-fg">
-            {sub.stdout || '(no output)'}
-          </pre>
-        </div>
-      ) : null}
-    </div>
+    <ul className="divide-y divide-line">
+      {submits.map((s) => {
+        const i = indexOf(s.slug);
+        const done = s.status === 'DONE';
+        return (
+          <li key={s.publicId} className="flex items-center justify-between gap-3 py-2.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => i >= 0 && onOpen(i)}
+                className="shrink-0 rounded-md border border-line bg-surface-2 px-2 py-0.5 text-[12px] font-semibold text-fg hover:border-accent hover:text-accent"
+              >
+                {i >= 0 ? problemLetter(i) : '?'}
+              </button>
+              {done && s.verdict ? (
+                <span
+                  className={`truncate rounded-full border px-2 py-0.5 text-[11px] font-medium ${VERDICT_STYLES[s.verdict]}`}
+                >
+                  {VERDICT_LABELS[s.verdict]}
+                </span>
+              ) : (
+                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] text-muted">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {s.status === 'RUNNING' ? 'Running' : 'Queued'}
+                </span>
+              )}
+              {done ? (
+                <span className="shrink-0 text-[12px] tabular-nums text-faint">
+                  {s.testsPassed}/{s.testsTotal}
+                </span>
+              ) : null}
+            </div>
+            <span className="flex shrink-0 items-center gap-3 text-[12px] text-faint">
+              <span className="mono-label hidden sm:inline">{LANGUAGE_META[s.language].label}</span>
+              <span title={new Date(s.createdAt).toLocaleString()}>{timeAgo(s.createdAt)}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

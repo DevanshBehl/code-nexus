@@ -24,6 +24,7 @@ import {
   getContestQuestions,
   leaderboard,
   listContests,
+  listContestSubmissions,
   publishContest,
   removeQuestion,
   startContest,
@@ -210,6 +211,16 @@ export function createContestsRouter(deps: ApiDeps): Router {
       );
       audit(req, 'contest:submit', result.submissionPublicId);
       res.status(202).json(result);
+    }),
+  );
+
+  // The caller's own verdict history for this contest (scoped in the service).
+  router.get(
+    '/contests/:publicId/submissions',
+    ...guards,
+    requirePermission('contest:read'),
+    asyncHandler(async (req, res) => {
+      res.status(200).json({ submissions: await listContestSubmissions(req.auth!, pid(req)) });
     }),
   );
 

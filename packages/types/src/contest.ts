@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { PROGRAMMING_LANGUAGES, type ProgrammingLanguage } from './arena.js';
+import {
+  PROGRAMMING_LANGUAGES,
+  type ProgrammingLanguage,
+  type SubmissionListRow,
+} from './arena.js';
 
 /**
  * Phase 7 — Contests. A contest is "the Phase-6 execution pipeline run in a
@@ -190,6 +194,21 @@ export interface ContestDetail {
   attemptEndsAt?: string | null;
   /** Present only when the caller may see the questions (host, or the student has started). */
   questions?: ContestQuestionRow[];
+}
+
+/**
+ * One of the caller's own submissions inside a contest, newest first.
+ *
+ * Carries the problem it was for, because a contest attempt is judged as a whole:
+ * the question a participant asks of this list is "where do I stand across A, B
+ * and C", never "what happened to submission 41".
+ */
+export interface ContestSubmissionRow extends SubmissionListRow {
+  slug: string;
+}
+
+export interface ContestSubmissionsResponse {
+  submissions: ContestSubmissionRow[];
 }
 
 /** One row of the leaderboard. */

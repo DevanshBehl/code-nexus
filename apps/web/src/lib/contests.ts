@@ -7,8 +7,18 @@ export const contestKeys = {
   detail: (publicId: string) => ['contests', publicId] as const,
   questions: (publicId: string) => ['contests', publicId, 'questions'] as const,
   leaderboard: (publicId: string) => ['contests', publicId, 'leaderboard'] as const,
+  submissions: (publicId: string) => ['contests', publicId, 'submissions'] as const,
   submission: (publicId: string) => ['arena', 'submission', publicId] as const,
 };
+
+/**
+ * Contest problems are called by LETTER — A, B, C — on the tab strip, in the
+ * standings, and in every conversation about the round afterwards. One function
+ * so those three never drift apart.
+ */
+export function problemLetter(index: number): string {
+  return String.fromCharCode(65 + (index % 26));
+}
 
 export const PHASE_LABEL: Record<ContestPhase, string> = {
   draft: 'Draft',

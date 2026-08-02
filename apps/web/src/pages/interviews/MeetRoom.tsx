@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import {
   electRecorder,
+  isTerminalSubmissionStatus,
   type EnqueueResponse,
   type InterviewChatMessage,
   type InterviewDetail,
@@ -146,7 +147,8 @@ export function MeetRoom({
   const [messages, setMessages] = useState<ChatRow[]>([]);
   const [unread, setUnread] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const [runResult, setRunResult] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<SubmissionDto | null>(null);
+  const [runError, setRunError] = useState<string | undefined>();
   const [running, setRunning] = useState(false);
 
   // ---- Recording (Phase 10) -------------------------------------------------
@@ -434,9 +436,17 @@ export function MeetRoom({
     codeTimer.current = setTimeout(() => sessionRef.current?.sendCode(v), 250);
   };
 
+  /**
+   * Run the shared code against the pinned question's samples. Polled rather than
+   * pushed: an interview run is one-off and short, and the judge already reports
+   * a terminal state, so a loop that gives up after 30s is the whole protocol.
+   * The full verdict is kept — the room renders it the same way the arena does,
+   * so a candidate reads the result they are used to reading.
+   */
   const run = async (): Promise<void> => {
     setRunning(true);
-    setRunResult('Queued…');
+    setRunError(undefined);
+    setRunResult(null);
     try {
       const res = await api.post<EnqueueResponse>(`/interviews/${publicId}/run`, {
         language,
@@ -446,13 +456,14 @@ export function MeetRoom({
       for (let i = 0; i < 30; i += 1) {
         await new Promise((r) => setTimeout(r, 1000));
         const s = await api.get<SubmissionDto>(`/arena/submissions/${id}`);
-        if (s.status === 'DONE' || s.status === 'ERROR') {
-          setRunResult(s.stderr || s.compileOutput || s.stdout || `${s.verdict ?? s.status}`);
-          break;
+        if (isTerminalSubmissionStatus(s.status)) {
+          setRunResult(s);
+          return;
         }
       }
+      setRunError('The judge is taking longer than usual — try running again.');
     } catch (e) {
-      setRunResult(e instanceof ApiError ? e.message : 'Run failed');
+      setRunError(e instanceof ApiError ? e.message : 'Run failed');
     } finally {
       setRunning(false);
     }
@@ -572,6 +583,7 @@ export function MeetRoom({
                     running={running}
                     canRun={isCandidate}
                     result={runResult}
+                    resultError={runError}
                     readOnly={!canEditCode}
                     authorName={candidateName}
                   />
